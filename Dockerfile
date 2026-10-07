@@ -3,6 +3,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY lib ./lib
+COPY scripts ./scripts
 COPY server.js ./
 # Fila durável: monte um VOLUME PERSISTENTE em /data (EasyPanel → Mounts).
 ENV NODE_ENV=production DATA_DIR=/data PORT=3000

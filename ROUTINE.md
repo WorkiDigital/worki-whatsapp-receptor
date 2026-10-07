@@ -19,11 +19,11 @@ Nada de IA no código do receptor: o executor é a rotina Claude (assinatura). O
 |---|---|
 | `/api/task/reply` `{text, final?}` | Responde na conversa da tarefa (destino derivado da tarefa; `to` do corpo é ignorado). `final:false` mantém a tarefa aberta (atualização de progresso) |
 | `/api/ops/me` | Permissões efetivas e conversa |
-| `/api/ops/can` `{op, client?}` | Pode fazer a operação? Chamar **antes** de operar em Zernio/GitHub/Vercel |
-| `/api/ops/record` `{op, client?, status, platform, ref, evidence, idempotencyKey?}` | Grava o resultado de operação em outra plataforma (`started/done/verified/failed/uncertain`; `done` e `verified` exigem evidência). Devolve `previous`: se já `verified`, **não repetir** |
+| `/api/ops/can` `{op, client?}` | Pode fazer a operação? (consulta; **não** é a barreira das escritas externas: ver "Limite honesto") |
+| `/api/ops/record` `{op, client?, status, platform, ref, evidence, idempotencyKey?}` | Registra operação (`started/done/verified/failed/uncertain`; `done`/`verified` exigem evidência). **Escrita externa** (`publish_instagram`, `deploy_*`, `edit_repo`, `send_email`, campanhas) não pode ser certificada pelo executor: `done`/`verified` voltam `409 mediated_only`. Devolve `previous` |
 | `/api/ops/history` `{client?, limit?}` | Pedidos anteriores (a pessoa vê os seus; administrador vê todos) |
 | `/api/ops/handoff` `{reason}` | Avisa de fato o atualizador (`OPERATOR_CONTACT`). Sem contato configurado devolve erro: **não prometa humano** |
-| `/api/ops/whatsapp/create-group` `{client?, subject, participants[], includeRequester?, description?, register?}` | Cria, **verifica** (`findGroupInfos`) e informa participantes ausentes. Idempotente |
+| `/api/ops/whatsapp/create-group` `{client?, subject, participants[], includeRequester?, description?, register?, allowDuplicate?}` | **Antes de criar, lista os grupos**: se já existe um com o mesmo nome, devolve `status: exists` e **não cria** (só `allowDuplicate:true` cria outro); se não conseguir listar, não cria. Depois de criar, **verifica** (`findGroupInfos`) e informa `missing` (pedidos ausentes) e `unexpected` (presentes que ninguém pediu, exceto a conta criadora). Idempotente |
 | `/api/ops/whatsapp/poll` `{name, values[2-10], selectableCount?}` · `/react` `{reaction, messageId?}` · `/ghost-mention` `{text, everyone? \| mentioned[]}` | Operações de WhatsApp com permissão própria |
 | `/api/admin/access` `{action: grant\|set\|suspend\|reactivate\|revoke\|revoke_grant\|get\|list, number, name, clients[], ops[], expiresAt?}` | Gestão de acessos (resposta = leitura do que ficou registrado) |
 | `/api/admin/groups` `{action: register\|remove\|list, jid, client}` | Grupos atendidos |
@@ -33,11 +33,13 @@ Nada de IA no código do receptor: o executor é a rotina Claude (assinatura). O
 ## Operações e escopo
 Catálogo em `lib/catalog.js` (espelha `OPERATIONS` do repositório `worki-agency-agent`). `manage_access` só administradores do ambiente concedem; quem tem `manage_access` num cliente concede apenas operações que ele próprio tem, só nesse cliente; `"*"` só administrador do ambiente; revogado só volta por concessão de administrador do ambiente.
 
-## Limite honesto
-Para Zernio, GitHub e Vercel as credenciais ficam no ambiente da rotina: o receptor **não** consegue impedir tecnicamente uma chamada direta. A barreira ali é `can` + `record` + prompt/skills. Se isso não bastar, o próximo passo é fazer o receptor intermediar essas chamadas.
+## Limite honesto (escritas em Zernio, GitHub e Vercel)
+Hoje a barreira técnica cobre **WhatsApp e administração de acessos**. Para Zernio, GitHub e Vercel **nada impede em código** uma chamada direta feita pela rotina com credencial própria; `can` e `record` não são barreira. Por isso:
+- **Não coloque credenciais de escrita de Zernio, GitHub ou Vercel no ambiente da rotina** até existirem as rotas mediadas de [docs/escrita-mediada.md](docs/escrita-mediada.md). Sem credencial, a rotina não consegue escrever e relata o bloqueio.
+- O `record` recusa certificar sucesso dessas escritas (`mediated_only`).
 
 ## Variáveis do serviço
-Ver `.env.example`. Novas: `ADMIN_SENDERS` (cai em `ALLOWED_SENDERS` se vazio), `OPERATOR_CONTACT`, `REPLY_MAX_CHARS`, `TASK_MAX_REPLIES`, `TASK_TTL_SECONDS`. **`SEND_SECRET` deve existir uma única vez** e ser exclusivo da rotina (≠ `EVOLUTION_WEBHOOK_SECRET`).
+Ver `.env.example`. Novas: `ADMIN_SENDERS` (cai em `ALLOWED_SENDERS` se vazio), `OPERATOR_CONTACT`, `REPLY_MAX_CHARS`, `TASK_MAX_REPLIES`, `TASK_TTL_SECONDS`. **`SEND_SECRET` deve existir uma única vez** (use `node scripts/env-audit.js` para conferir). Rotação sem parada: `SEND_SECRET_NEXT` e `EVOLUTION_WEBHOOK_SECRET_NEXT` valem junto do principal e ser exclusivo da rotina (≠ `EVOLUTION_WEBHOOK_SECRET`).
 
 ## Acionamento da rotina
 `POST https://api.anthropic.com/v1/claude_code/routines/<trig_...>/fire`, `Authorization: Bearer <token da rotina>`, `anthropic-beta: experimental-cc-routine-2026-04-01`, `anthropic-version: 2023-06-01`, corpo `{"text": "..."}` (research preview; 30/h por rotina, 100/h na conta). O texto chega à rotina embrulhado como dado não confiável (`<routine-fire-payload>`).
@@ -45,8 +47,8 @@ Ver `.env.example`. Novas: `ADMIN_SENDERS` (cai em `ALLOWED_SENDERS` se vazio), 
 ## Configurar a rotina (passo do operador; não feito pelo código)
 1. **Prompt:** usar o de [docs/routine-prompt.md](docs/routine-prompt.md).
 2. **Repositório:** anexar `WorkiDigital/worki-agency-agent` (skills e documentação).
-3. **Ambiente da rotina:** `SEND_SECRET`; `ZERNIO_API_KEY`; `VERCEL_TOKEN` (e `VERCEL_TEAM_ID`); acesso GitHub com escopo mínimo aos repositórios necessários. Variáveis do ambiente são visíveis a quem o usa.
-4. **Rede:** permitir `n8n-receptor.ubufeb.easypanel.host` (receptor), `api.zernio.com`, `api.vercel.com`, `github.com`/`api.github.com`.
+3. **Ambiente da rotina:** só `SEND_SECRET`. **Sem** credenciais de escrita de Zernio, GitHub ou Vercel (ver "Limite honesto"). Variáveis do ambiente são visíveis a quem o usa.
+4. **Rede:** permitir apenas `n8n-receptor.ubufeb.easypanel.host` (receptor) e, para ler este repositório, `github.com`.
 5. **Conectores:** remover todos os que a rotina não precisa (por padrão entram todos, sem aprovação, e ela lê texto vindo do WhatsApp).
 6. Reimplantar o receptor com a branch desta entrega e **cadastrar o grupo/pessoas pelo WhatsApp** (administrador).
 

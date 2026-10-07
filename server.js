@@ -16,7 +16,8 @@ import { digits } from './lib/numbers.js';
 const env = process.env;
 const port = Number(env.PORT || 3000);
 const dir = env.DATA_DIR || '/data';
-const store = createStore(dir);
+// Tolerância do worker de disparo: o limite da rotina é 30 disparos/hora (documentação das rotinas); ajustar se necessário.
+const store = createStore(dir, { maxAttempts: Number(env.QUEUE_MAX_ATTEMPTS || 3), backoffMs: Number(env.QUEUE_BACKOFF_MS || 1000) });
 const handler = createHandler({ env, store });
 // Administradores iniciais: ADMIN_SENDERS (ALLOWED_SENDERS como compatibilidade). Demais acessos: DATA_DIR/access.jsonl.
 const admins = String(env.ADMIN_SENDERS || env.ALLOWED_SENDERS || '').split(',').map(digits).filter((d) => d.length >= 10);

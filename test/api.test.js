@@ -125,7 +125,7 @@ test('criar grupo: exige permissão; cria, verifica e informa participantes ause
     assert.equal(r.code, 200); assert.equal(r.body.status, 'verified');
     assert.equal(r.body.result.groupJid, GROUP); assert.deepEqual(r.body.result.missing, [OTHER]);
     assert.equal(r.body.registered, true); assert.equal(w.access.group(GROUP).client, 'worki');
-    assert.deepEqual(evo.calls[0].arg.participants.sort(), [ADMIN, MARIA, OTHER].sort());
+    assert.deepEqual(evo.calls.find((c) => c.name === 'createGroup').arg.participants.sort(), [ADMIN, MARIA, OTHER].sort());
     assert.equal(w.tasks.tasks.get(a.t.id).state, 'verified');
     // Repetição do mesmo pedido não cria outro grupo.
     const again = await w.call('/api/ops/whatsapp/create-group', a.token, { client: 'worki', subject: 'Worki digital operação', participants: [MARIA, OTHER], includeRequester: true });
@@ -198,18 +198,23 @@ test('enquete, reação e menção fantasma: permissão por operação, validaç
   } finally { w.close(); }
 });
 
-test('registro de operação em outra plataforma: exige permissão e evidência; recusa regravar verificado como pendente', async () => {
+test('registro: evidência obrigatória; escrita externa NÃO é certificada pelo executor; rascunho sim; verificado não regrava', async () => {
   const w = world();
   try {
-    w.access.grant({ by: ADMIN, number: MARIA, clients: ['x'], ops: ['publish_instagram'] });
+    w.access.grant({ by: ADMIN, number: MARIA, clients: ['x'], ops: ['publish_instagram', 'prepare_instagram_post'] });
     const m = w.task({ sender: MARIA });
-    const body = { op: 'publish_instagram', client: 'x', platform: 'zernio', ref: 'post-1' };
-    assert.equal((await w.call('/api/ops/record', m.token, { ...body, status: 'done' })).body.error, 'evidence_required');
-    assert.equal((await w.call('/api/ops/record', m.token, { ...body, status: 'started' })).code, 200);
-    const done = await w.call('/api/ops/record', m.token, { ...body, status: 'verified', evidence: 'permalink https://instagram.com/p/abc' });
-    assert.equal(done.body.previous, 'started');
+    const pub = { op: 'publish_instagram', client: 'x', platform: 'zernio', ref: 'post-1' };
+    assert.equal((await w.call('/api/ops/record', m.token, { ...pub, status: 'started' })).code, 200, 'intenção pode ser registrada');
+    for (const status of ['done', 'verified']) {
+      const r = await w.call('/api/ops/record', m.token, { ...pub, status, evidence: 'permalink https://instagram.com/p/abc' });
+      assert.equal(r.code, 409); assert.equal(r.body.error, 'mediated_only', 'o executor não certifica escrita externa');
+    }
+    assert.equal(w.tasks.tasks.get(m.t.id).state, 'started', 'estado não avança sem certificação');
+    const draft = { op: 'prepare_instagram_post', client: 'x', platform: 'receptor', ref: 'rascunho-1' };
+    assert.equal((await w.call('/api/ops/record', m.token, { ...draft, status: 'done' })).body.error, 'evidence_required');
+    assert.equal((await w.call('/api/ops/record', m.token, { ...draft, status: 'verified', evidence: 'rascunho entregue na conversa' })).code, 200);
     assert.equal(w.tasks.tasks.get(m.t.id).state, 'verified');
-    assert.equal((await w.call('/api/ops/record', m.token, { ...body, status: 'started' })).code, 409);
+    assert.equal((await w.call('/api/ops/record', m.token, { ...draft, status: 'started' })).code, 409);
   } finally { w.close(); }
 });
 
@@ -260,4 +265,58 @@ test('handoff: só promete humano se o aviso foi enviado de fato; sem contato co
     const a = semContato.task({ sender: ADMIN });
     assert.equal((await semContato.call('/api/ops/handoff', a.token, { reason: 'x' })).body.error, 'handoff_not_configured');
   } finally { w.close(); semContato.close(); }
+});
+
+test('pré-verificação: se já existe grupo com o nome, NÃO cria; se não dá para listar, NÃO cria; allowDuplicate cria mesmo assim', async () => {
+  const existing = [{ id: GROUP, subject: ' worki DIGITAL operação ', owner: `${ADMIN}@s.whatsapp.net`, participants: [{ id: `${ADMIN}@s.whatsapp.net` }, { id: `${MARIA}@s.whatsapp.net` }] }];
+  const w = world({ evo: fakeEvo({ fetchAllGroups: () => ({ kind: 'ok', http: 200, data: existing }) }) });
+  try {
+    const a = w.task({ sender: ADMIN });
+    const r = await w.call('/api/ops/whatsapp/create-group', a.token, { client: 'worki', subject: 'Worki digital operação', participants: [MARIA] });
+    assert.equal(r.body.status, 'exists'); assert.equal(r.body.created, false); assert.equal(r.body.result.groupJid, GROUP);
+    assert.equal(w.evo.calls.filter((c) => c.name === 'createGroup').length, 0, 'não criou');
+    assert.equal(w.tasks.tasks.get(a.t.id).state, 'verified');
+    const dup = await w.call('/api/ops/whatsapp/create-group', w.task({ sender: ADMIN }).token, { client: 'worki', subject: 'Worki digital operação', participants: [MARIA], allowDuplicate: true });
+    assert.equal(w.evo.calls.filter((c) => c.name === 'createGroup').length, 1, 'duplicado só com pedido explícito');
+    assert.notEqual(dup.body.status, 'exists');
+  } finally { w.close(); }
+  for (const kind of ['uncertain', 'rejected']) {
+    const f = world({ evo: fakeEvo({ fetchAllGroups: () => ({ kind, http: 500 }) }) });
+    try {
+      const r = await f.call('/api/ops/whatsapp/create-group', f.task({ sender: ADMIN }).token, { client: 'worki', subject: 'Novo', participants: [MARIA] });
+      assert.equal(r.code, 503); assert.equal(r.body.error, 'preflight_failed');
+      assert.equal(f.evo.calls.filter((c) => c.name === 'createGroup').length, 0, `falha fechada (${kind})`);
+    } finally { f.close(); }
+  }
+});
+
+test('teste do operador: somente o contato que pede + a conta que cria o grupo; qualquer extra é sinalizado', async () => {
+  const OWNER = '5585911110000';
+  const mk = (extra) => fakeEvo({
+    createGroup: () => ({ kind: 'ok', http: 201, data: { id: GROUP, subject: 'Worki digital operação' } }),
+    findGroupInfos: () => ({ kind: 'ok', http: 200, data: { id: GROUP, subject: 'Worki digital operação', owner: `${OWNER}@s.whatsapp.net`, participants: [{ id: `${OWNER}@s.whatsapp.net`, admin: 'superadmin' }, { id: `${ADMIN}@s.whatsapp.net` }, ...extra] } }),
+  });
+  for (const [extra, want] of [[[], []], [[{ id: `${OTHER}@s.whatsapp.net` }], [OTHER]]]) {
+    const evo = mk(extra); const w = world({ evo });
+    try {
+      const r = await w.call('/api/ops/whatsapp/create-group', w.task({ sender: ADMIN }).token, { client: 'worki', subject: 'Worki digital operação', includeRequester: true });
+      assert.equal(r.body.status, 'verified');
+      assert.deepEqual(evo.calls.find((c) => c.name === 'createGroup').arg.participants, [ADMIN], 'só o contato de quem pediu');
+      assert.deepEqual(r.body.result.unexpected, want); assert.deepEqual(r.body.result.missing, []);
+    } finally { w.close(); }
+  }
+});
+
+test('rotação sem parada: SEND_SECRET_NEXT e EVOLUTION_WEBHOOK_SECRET_NEXT valem junto do principal', async () => {
+  const w = world({ env: { SEND_SECRET: 'antigo', SEND_SECRET_NEXT: 'novo' } });
+  try {
+    const t = w.task({ sender: ADMIN });
+    assert.equal((await w.call('/api/ops/me', t.token, {}, { secret: 'antigo' })).code, 200);
+    assert.equal((await w.call('/api/ops/me', t.token, {}, { secret: 'novo' })).code, 200);
+    assert.equal((await w.call('/api/ops/me', t.token, {}, { secret: 'outro' })).code, 401);
+  } finally { w.close(); }
+  const { createHandler } = await import('../lib/handler.js');
+  const h = createHandler({ env: { EVOLUTION_WEBHOOK_SECRET: 'a', EVOLUTION_WEBHOOK_SECRET_NEXT: 'b', ALLOWED_CLIENTS: 'worki' }, dedup: { check: () => false }, waitUntil: (p) => p, forward: async () => 200 });
+  const code = (sec) => new Promise((resolve) => { h({ method: 'POST', headers: { 'x-webhook-secret': sec }, query: { client: 'worki' }, body: { event: 'qrcode.updated' } }, { status(c) { this.c = c; return this; }, json() { resolve(this.c); } }); });
+  assert.equal(await code('a'), 200); assert.equal(await code('b'), 200); assert.equal(await code('c'), 401);
 });
