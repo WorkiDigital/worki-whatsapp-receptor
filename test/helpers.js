@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { AccessStore } from '../lib/access.js';
 import { TaskStore } from '../lib/tasks.js';
 import { createApi } from '../lib/api.js';
+import { ApprovalStore } from '../lib/approvals.js';
 
 export const ADMIN = '5585988880001';
 export const MARIA = '5585988887777';
@@ -30,7 +31,8 @@ export function world({ evo = fakeEvo(), env = {}, t0 = 1_800_000_000_000 } = {}
   const now = () => clock.t;
   const access = new AccessStore({ dir, admins: [ADMIN], now });
   const tasks = new TaskStore({ dir, now });
-  const api = createApi({ env: { ...ENV, ...env }, access, tasks, evo, now });
+  const approvals = new ApprovalStore({ dir, now, ttlMs: Number(env.APPROVAL_TTL_SECONDS || 900) * 1000 });
+  const api = createApi({ env: { ...ENV, ...env }, access, tasks, evo, approvals, now });
   // Cria uma tarefa como o despachante faria (identidade verificada pelo webhook, não pelo modelo).
   const task = ({ sender = ADMIN, conv, isGroup = false, client = null, msgId = 'M1', n = Math.random() } = {}) => {
     const { task: t, token } = tasks.issue({ eventKey: `worki:${n}`, sender, conv: conv ?? `${sender}@s.whatsapp.net`, isGroup, client, msgId, request: 'pedido' });
@@ -41,5 +43,5 @@ export function world({ evo = fakeEvo(), env = {}, t0 = 1_800_000_000_000 } = {}
     const res = { status(c) { this.c = c; return this; }, json(o) { resolve({ code: this.c, body: o }); } };
     api({ method, headers: { ...(secret ? { 'x-send-secret': secret } : {}), ...(token ? { authorization: `Bearer ${token}` } : {}) }, body }, res, path);
   });
-  return { dir, clock, access, tasks, evo, api, task, call, close() { access.close(); tasks.close(); rmSync(dir, { recursive: true, force: true }); } };
+  return { dir, clock, access, tasks, approvals, evo, api, task, call, close() { approvals.close(); access.close(); tasks.close(); rmSync(dir, { recursive: true, force: true }); } };
 }

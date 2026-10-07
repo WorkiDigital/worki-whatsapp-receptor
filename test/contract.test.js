@@ -19,7 +19,7 @@ test('contrato: toda rota citada no prompt e no guia existe na API (ou é a lega
     const unknown = cited.filter((r) => !known.has(r) && ![...known].some((k) => k.startsWith(r + '/')));
     assert.deepEqual(unknown, []);
     // e as rotas de prompt realmente usadas pelo procedimento
-    for (const r of ['/api/ops/me', '/api/ops/can', '/api/ops/record', '/api/ops/page/publish', '/api/ops/instagram/prepare', '/api/ops/instagram/publish', '/api/task/reply', '/api/ops/handoff', '/api/ops/history', '/api/admin/access']) assert.ok(w.api.routes.includes(r), r);
+    for (const r of ['/api/ops/me', '/api/ops/plan', '/api/ops/approval', '/api/ops/can', '/api/ops/record', '/api/ops/page/publish', '/api/ops/instagram/prepare', '/api/ops/instagram/publish', '/api/task/reply', '/api/ops/handoff', '/api/ops/history', '/api/admin/access', '/api/admin/approvals']) assert.ok(w.api.routes.includes(r), r);
   } finally { w.close(); }
 });
 
