@@ -116,7 +116,7 @@ test('Instagram mediado exige o hash, usa idempotência e verifica o link devolv
     const count = calls.length;
     const replay = await w.call('/api/ops/instagram/publish', body);
     assert.equal(replay.code, 200); assert.equal(replay.body.replayed, true); assert.equal(calls.length, count);
-    assert.ok(calls.every((c) => c.key === 'ig-op-1' || c.key === undefined));
+    assert.ok(calls.filter((c) => c.key).every((c) => c.key !== 'ig-op-1')); 
     assert.ok(!JSON.stringify(first.body).includes(zernioToken));
   } finally { w.close(); }
 });
@@ -170,3 +170,27 @@ test('Vercel: espera padrão cobre ~60s, aceita proteção explicitamente e só 
   } finally { waited.close(); }
 });
 
+
+test('idempotência mediada: cliente e hash entram na chave; nova chave não duplica após reconciliação', async () => {
+  const otherResources = { version: 1, clients: { ...DEFAULT_RESOURCES.clients, other: { ...DEFAULT_RESOURCES.clients.worki, github: { ...DEFAULT_RESOURCES.clients.worki.github, repo: 'WorkiDigital/other' }, vercel: { ...DEFAULT_RESOURCES.clients.worki.vercel, projectId: 'prj_other', name: 'other-site' }, zernio: { ...DEFAULT_RESOURCES.clients.worki.zernio, accountId: 'acct_other' } } } };
+  let deploys = 0;
+  const fetchImpl = async (url) => {
+    if (url.includes('/git/ref/heads/')) return { status: 200, json: async () => ({ object: { sha: 'base' } }) };
+    if (url.includes('/git/commits/base')) return { status: 200, json: async () => ({ tree: { sha: 'tree' } }) };
+    if (url.endsWith('/git/trees')) return { status: 201, json: async () => ({ sha: 'tree-new' }) };
+    if (url.endsWith('/git/commits')) return { status: 201, json: async () => ({ sha: 'commit-new' }) };
+    if (url.includes('/git/refs/heads/')) return { status: 200, json: async () => ({ ref: 'refs/heads/agent' }) };
+    if (url.endsWith('/deployments')) { deploys++; return { status: 200, json: async () => ({ id: `dpl-${deploys}` }) }; }
+    if (url.includes('/deployments/dpl-')) return { status: 200, json: async () => ({ readyState: 'READY', url: `site-${deploys}.vercel.app` }) };
+    if (url.startsWith('https://site-')) return { ok: true, status: 200, json: async () => ({}) };
+    throw new Error('unexpected fake URL');
+  };
+  const w = setup({ resources: otherResources, flags: { WRITE_GITHUB_ENABLED: 'true', WRITE_VERCEL_ENABLED: 'true', VERCEL_POLL_MS: '0', GITHUB_TOKEN: secret(), VERCEL_TOKEN: secret() }, fetchImpl });
+  try {
+    const body = { slug: 'same', html: '<title>Same</title>', target: 'preview', idempotencyKey: 'caller-key' };
+    const first = await w.call('/api/ops/page/publish', { ...body, client: 'worki' });
+    const second = await w.call('/api/ops/page/publish', { ...body, client: 'other' });
+    assert.equal(first.code, 200); assert.equal(second.code, 200); assert.notEqual(second.body.replayed, true); assert.equal(deploys, 2);
+  } finally { w.close(); }
+
+});
