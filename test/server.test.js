@@ -39,6 +39,13 @@ test('servidor: 401 sem segredo; mensagem 202; duplicada 200 (inclusive após re
   } finally { await s.stop(); rmSync(dir, { recursive: true }); }
 });
 
+test('/health: filtro habilitado sem identidade avisa self_unknown, sem expor telefone', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rcv-health-')); const port = 41000 + Math.floor(Math.random() * 1000);
+  const s = await boot(dir, port, { GROUP_REQUIRE_MENTION: 'true' });
+  try { const h = await req(port, '/health', { method: 'GET' }); assert.deepEqual(h.body.warnings, ['self_unknown']); }
+  finally { await s.stop(); rmSync(dir, { recursive: true }); }
+});
+
 test('worker: entrega pendentes, repete em falha e registra falha definitiva', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'rcv-'));
   const st = createStore(dir, { backoffMs: 0, maxAttempts: 2 });

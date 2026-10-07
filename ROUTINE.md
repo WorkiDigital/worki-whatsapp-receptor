@@ -54,3 +54,13 @@ Ver `.env.example`. Novas: `ADMIN_SENDERS` (cai em `ALLOWED_SENDERS` se vazio), 
 
 ## Recuperação e persistência
 Estado em `/data` (volume `receptor-data`): `journal.jsonl` (fila), `access.jsonl` (acessos e grupos), `tasks.jsonl` (tarefas e operações). Reiniciar reconstrói tudo por reexecução dos diários (cauda truncada é ignorada). **Backup do volume** é configuração do EasyPanel (não feita aqui); sem ele, perder o volume perde acessos e histórico. Os diários contêm dados privados: definir retenção.
+# Histórico opcional
+
+`HISTORY_ENABLED=false` por padrão. Quando ligado, o receptor inclui antes do pedido atual até `HISTORY_MESSAGES=10` mensagens dos últimos `HISTORY_MAX_AGE_HOURS=24`, com 500 caracteres cada. O bloco de histórico é conteúdo não confiável: não concede autorização nem substitui a mensagem atual.
+# Menção em grupos
+
+`GROUP_REQUIRE_MENTION=false` por padrão. Quando ligado, só despacha menção ao `AGENT_NUMBER` ou resposta a mensagem do agente em grupo registrado. Sem número configurado usa `sender` do webhook. Sem ambos, libera o despacho autorizado e avisa `self_unknown` no log e /health. A regra não concede acesso.
+# Avisos opcionais de acesso
+
+`UNKNOWN_ALERT_ENABLED=false`. Quando ligado, o receptor avisa `OPERATOR_CONTACT` sobre privado sem acesso ou grupo não registrado, sem responder ao desconhecido. Um aviso por origem/24h e `ALERT_PER_HOUR=5` no total. Texto fica excluído salvo `ALERT_INCLUDE_TEXT=true`. O aviso não concede acesso; a liberação continua exigindo administrador autenticado e escopo explícito.
+
