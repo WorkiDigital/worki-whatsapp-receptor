@@ -26,13 +26,14 @@ const access = new AccessStore({ dir, admins });
 const tasks = new TaskStore({ dir, ttlMs: Number(env.TASK_TTL_SECONDS || 7200) * 1000 });
 const evo = createEvo({ env });
 const history = new History({ dir, env });
+const mentionState = { selfUnknown: env.GROUP_REQUIRE_MENTION === 'true' && !env.AGENT_NUMBER };
 const api = createApi({ env, access, tasks, evo, history });
 const sendHandler = createSendHandler({ env, access, evo, history });
 const log = (event, f = {}) => console.log(JSON.stringify({ event, ...f }));
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
-  if (url.pathname === '/health') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: true, ...store.queue.stats(), ...tasks.stats() })); }
+  if (url.pathname === '/health') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: true, ...store.queue.stats(), ...tasks.stats(), ...(mentionState.selfUnknown ? { warnings: ['self_unknown'] } : {}) })); }
   const m = /^\/api\/evolution\/([^/]+)$/.exec(url.pathname);
   const isSend = url.pathname === '/api/send';
   const isApi = /^\/api\/(task|ops|admin)\//.test(url.pathname);
@@ -58,7 +59,7 @@ const timer = setInterval(async () => {
   if (!cfg || busy) return;
   busy = true;
   try {
-    await drain(store.queue, createDispatcher({ env, cfg, access, tasks, history, log }), log);
+    await drain(store.queue, createDispatcher({ env, cfg, access, tasks, history, mentionState, log }), log);
   } catch { log('error', { code: 'drain_failed' }); } finally { busy = false; }
 }, 1000);
 

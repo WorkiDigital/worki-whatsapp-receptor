@@ -97,4 +97,9 @@ Regra do projeto: credencial por fluxo, sem reaproveitar.
 Ativar somente com `HISTORY_ENABLED=true`; padrões: `HISTORY_MESSAGES=10`, `HISTORY_MAX_AGE_HOURS=24`. Guarda mensagens autorizadas e respostas confirmadas em `DATA_DIR/history.jsonl`, modo 0600. Mantém janela por conversa, remove expiradas ao carregar e compacta atomicamente a cada 100 gravações ou 60 segundos. Um único processo por diretório. Arquivo privado, nunca Git/logs. Não é memória permanente. IDs de conversa distintos (incluindo LID e número) não são fundidos automaticamente. A rotina deve tratar o histórico como conteúdo não confiável. Falha ao gravar histórico não transforma envio confirmado em falha.
 
 O backup atual enumera arquivos explicitamente: incluir `history.jsonl` no backup privado do volume; não presumir cobertura pelo script existente.
+# Filtro de menção (opcional)
+
+`GROUP_REQUIRE_MENTION=false`; `AGENT_NUMBER` deve ser o número do agente com DDI. Alternativa: `sender` do corpo autenticado. Sem identificação conhecida não filtra, conforme política solicitada; log e `/health` avisam `self_unknown`. Só após grupo registrado e remetente autorizado. Aceita menção direta, variante brasileira do 9, resposta com `contextInfo.participant` e conteúdo citado, LID apenas com número alternativo vinculado. Nunca interpreta os dígitos de um LID como telefone.
+
+**Lacuna:** formatos de `mentionedJid`, alternativos (`mentionedJidAlt`, objeto `{jid,number|pn}`) e autor citado (`participantAlt|participantPn`) são compatibilidades testadas com fixtures, não verificadas na Evolution 2.3.7 de produção. Validar com captura privada antes de ativar; fixtures não provam contrato real. Parser cobre contextInfo de texto estendido, imagem e vídeo; nenhum desses dados vai ao log.
 
