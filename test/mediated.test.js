@@ -312,3 +312,26 @@ test('lista vazia não prova ausência nem permite duplicar publicação incerta
   } finally { w.close(); }
 });
 
+
+test('logs mediados registram provedor/estado/http sem corpo, segredo, conteúdo ou URL privada', async () => {
+  const token = secret(); const lines = []; const original = console.log; console.log = (...args) => lines.push(args.join(' '));
+  const fetchImpl = async (url, init = {}) => {
+    if (url.includes('/git/ref/heads/')) return { status: 200, json: async () => ({ object: { sha: 'base' } }) };
+    if (url.includes('/git/commits/base')) return { status: 200, json: async () => ({ tree: { sha: 'tree' } }) };
+    if (url.endsWith('/git/trees')) return { status: 201, json: async () => ({ sha: 'tree-new' }) };
+    if (url.endsWith('/git/commits')) return { status: 201, json: async () => ({ sha: 'commit-new' }) };
+    if (url.includes('/git/refs/heads/')) return { status: 200, json: async () => ({ ref: 'refs/heads/agent' }) };
+    if (url.endsWith('/deployments')) return { status: 200, json: async () => ({ id: 'dpl-log' }) };
+    if (url.includes('/deployments/dpl-log')) return { status: 200, json: async () => ({ readyState: 'READY', url: 'private.example.test' }) };
+    if (url === 'https://private.example.test') return { ok: true, status: 200, json: async () => ({}) };
+    throw new Error('unexpected fake URL');
+  };
+  const w = setup({ flags: { WRITE_GITHUB_ENABLED: 'true', WRITE_VERCEL_ENABLED: 'true', VERCEL_POLL_MS: '0', GITHUB_TOKEN: token, VERCEL_TOKEN: secret() }, resources: { ...DEFAULT_RESOURCES, clients: { worki: { ...DEFAULT_RESOURCES.clients.worki, vercel: { ...DEFAULT_RESOURCES.clients.worki.vercel, allowedHosts: ['private.example.test'] } } } }, fetchImpl });
+  try {
+    const r = await w.call('/api/ops/page/publish', { client: 'worki', slug: 'log', html: '<title>private-content</title>' });
+    assert.equal(r.code, 200);
+    const logText = lines.join('\n');
+    assert.match(logText, /mediated_provider/); assert.match(logText, /vercel/); assert.match(logText, /http/);
+    assert.ok(!logText.includes(token)); assert.ok(!logText.includes('private-content')); assert.ok(!logText.includes('private.example.test'));
+  } finally { console.log = original; w.close(); }
+});
