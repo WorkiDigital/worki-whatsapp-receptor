@@ -48,6 +48,12 @@ Conferência: exportar as variáveis do serviço para um arquivo **fora do Git**
    - Log de inicialização com `destination: true`.
 6. **Rotina:** prompt v2 (`docs/routine-prompt.md`); anexar o repositório `worki-agency-agent`; ambiente só com `SEND_SECRET`; rede com o host do receptor (**o ambiente padrão bloqueia domínios fora da lista**); remover conectores desnecessários. A rotina usa as rotas mediadas e não recebe credenciais de GitHub, Vercel ou Zernio.
 7. **Cadastro pelo WhatsApp** (administrador): conferir `/api/admin/access list`; cadastrar o grupo/pessoas necessários.
+
+## Autorização dinâmica
+
+Comece com `DYNAMIC_APPROVAL_ENABLED=false`. Depois do deploy e dos testes básicos, altere para `true` e defina `APPROVAL_TTL_SECONDS=900`. Reinicie o serviço e confira `/health`: `dynamicApproval` deve ser `true`.
+
+Teste em conversa privada do administrador: peça uma ação sensível; confirme que nada foi executado e que surgiu um código `A-XXXXXXXX`; responda `AUTORIZO <código>`; confira a evidência da operação e que repetir o mesmo código retorna `approval_used`. O diário `/data/approvals.jsonl` entra no backup. Até esse teste real, marque o recurso como não operacional.
 8. **Teste real** (seção 7), só com sua autorização.
 
 ## 4. Backup verificável de `/data`

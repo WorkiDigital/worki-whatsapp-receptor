@@ -29,6 +29,8 @@ Nada de IA no código do receptor: o executor é a rotina Claude (assinatura). O
 | `/api/ops/whatsapp/create-group` `{client?, subject, participants[], includeRequester?, description?, register?, allowDuplicate?}` | **Antes de criar, lista os grupos**: se já existe um com o mesmo nome, devolve `status: exists` e **não cria** (só `allowDuplicate:true` cria outro); se não conseguir listar, não cria. Depois de criar, **verifica** (`findGroupInfos`) e informa `missing` (pedidos ausentes) e `unexpected` (presentes que ninguém pediu, exceto a conta criadora). Idempotente |
 | `/api/ops/whatsapp/poll` `{name, values[2-10], selectableCount?}` · `/react` `{reaction, messageId?}` · `/ghost-mention` `{text, everyone? \| mentioned[]}` | Operações de WhatsApp com permissão própria |
 | `/api/admin/access` `{action: grant\|suspend\|reactivate\|revoke\|revoke_grant\|get\|list, number, name, clients[], ops[], mode?: add\|set, expiresAt?}` | Gestão de acessos (resposta = leitura do que ficou registrado) |
+| `/api/ops/plan` e `/api/ops/approval` | Planejamento sem execução e pedido de autorização vinculado ao conteúdo |
+| `/api/admin/approvals` `{action: approve\|deny\|list, code?}` | Aprovação pelo administrador em conversa privada |
 | `/api/admin/groups` `{action: register\|remove\|list, jid, client}` | Grupos atendidos |
 | `/api/admin/tasks` `{state?, limit?}` | Estado das tarefas (investigar travadas) |
 `/api/send` (sem token de tarefa) continua só por compatibilidade com o prompt antigo: envia apenas a quem tem acesso. Remover quando a rotina migrar.

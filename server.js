@@ -16,6 +16,7 @@ import { History } from './lib/history.js';
 import { Alerts } from './lib/alerts.js';
 import { loadResources } from './lib/resources.js';
 import { createMediated } from './lib/mediated.js';
+import { ApprovalStore } from './lib/approvals.js';
 
 const env = process.env;
 const port = Number(env.PORT || 3000);
@@ -27,6 +28,7 @@ const handler = createHandler({ env, store });
 const admins = String(env.ADMIN_SENDERS || env.ALLOWED_SENDERS || '').split(',').map(digits).filter((d) => d.length >= 10);
 const access = new AccessStore({ dir, admins });
 const tasks = new TaskStore({ dir, ttlMs: Number(env.TASK_TTL_SECONDS || 7200) * 1000 });
+const approvals = new ApprovalStore({ dir, ttlMs: Number(env.APPROVAL_TTL_SECONDS || 900) * 1000 });
 const log = (event, f = {}) => console.log(JSON.stringify({ event, ...f }));
 const evo = createEvo({ env });
 const alerts = new Alerts({ dir, env, log });
@@ -36,12 +38,12 @@ let mediated;
 try { mediated = createMediated({ env, dir, resources: loadResources(dir), tasks, access }); }
 catch (e) { log('error', { code: e.code === 'resources_invalid' ? 'resources_invalid' : 'mediated_init_failed' }); mediated = null; }
 if (mediated) void mediated.recover().then((r) => { if (r.scanned) log('mediated_recovery', { scanned: r.scanned, found: r.found, unknown: r.unknown }); }).catch(() => log('error', { code: 'mediated_recovery_failed' }));
-const api = createApi({ env, access, tasks, evo, history, mediated });
+const api = createApi({ env, access, tasks, evo, history, mediated, approvals });
 const sendHandler = createSendHandler({ env, access, evo, history });
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
-  if (url.pathname === '/health') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: true, ...store.queue.stats(), ...tasks.stats(), ...(mentionState.selfUnknown ? { warnings: ['self_unknown'] } : {}) })); }
+  if (url.pathname === '/health') { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: true, ...store.queue.stats(), ...tasks.stats(), approvals: approvals.stats(), dynamicApproval: env.DYNAMIC_APPROVAL_ENABLED === 'true', ...(mentionState.selfUnknown ? { warnings: ['self_unknown'] } : {}) })); }
   const m = /^\/api\/evolution\/([^/]+)$/.exec(url.pathname);
   const isSend = url.pathname === '/api/send';
   const isApi = /^\/api\/(task|ops|admin)\//.test(url.pathname);
@@ -72,5 +74,5 @@ const timer = setInterval(async () => {
 }, 1000);
 
 server.listen(port, env.HOST || '0.0.0.0', () => log('listening', { port, ...store.queue.stats(), destination: Boolean(cfg) }));
-const stop = () => { clearInterval(timer); server.close(() => { mediated?.close(); alerts.close(); history.close(); store.close(); access.close(); tasks.close(); process.exit(0); }); };
+const stop = () => { clearInterval(timer); server.close(() => { mediated?.close(); approvals.close(); alerts.close(); history.close(); store.close(); access.close(); tasks.close(); process.exit(0); }); };
 process.on('SIGINT', stop); process.on('SIGTERM', stop);
