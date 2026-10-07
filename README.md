@@ -1,6 +1,6 @@
 # worki-whatsapp-receptor
 
-Receptor de webhooks da **Evolution API 2.3.7** (WhatsApp) como função da Vercel. Valida o segredo, filtra os eventos e só encaminha mensagens reais. **Não responde no WhatsApp.**
+Receptor de webhooks da **Evolution API 2.3.7** (WhatsApp) como função da Vercel. Valida o segredo, filtra os eventos e só encaminha mensagens reais. Responde no WhatsApp **somente** pelo endpoint `/api/send`, desligado por padrão (`REPLY_ENABLED`), só para números permitidos e com limites ([ROUTINE.md](ROUTINE.md)).
 
 ```
 Evolution → POST /api/evolution/<cliente> → valida X-Webhook-Secret → filtra → (opcional) encaminha
@@ -39,6 +39,6 @@ Evolution → POST /api/evolution/<cliente> → valida X-Webhook-Secret → filt
 - **Contrato Evolution** conferido no código oficial 2.3.7; **nenhum evento real recebido ainda**; função **não publicada**.
 - Logs sem texto, remetente, conversa, segredo ou QR (testado).
 
-Guia do EasyPanel: [EASYPANEL.md](EASYPANEL.md).
+Guia do EasyPanel: [EASYPANEL.md](EASYPANEL.md). Respostas no WhatsApp e rotina Claude: [ROUTINE.md](ROUTINE.md).
 
 `npm test` roda os testes locais (sem rede).
