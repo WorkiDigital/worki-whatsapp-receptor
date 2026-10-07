@@ -5,14 +5,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AccessStore, AccessError } from '../lib/access.js';
 
-const ADMIN = '5585992494552'; const MARIA = '5585988887777'; const JOAO = '5585977776666';
+const ADMIN = '5585900010001'; const MARIA = '5585988887777'; const JOAO = '5585977776666';
 const mk = (t = { v: 1_800_000_000_000 }) => { const dir = mkdtempSync(join(tmpdir(), 'acc-')); return { dir, t, s: new AccessStore({ dir, admins: [ADMIN], now: () => t.v }) }; };
 
 test('admin do ambiente pode tudo; desconhecido não tem acesso; ausência de concessão nega', () => {
   const { dir, s } = mk();
   try {
     assert.ok(s.hasAccess(ADMIN)); assert.ok(s.can(ADMIN, 'publish_instagram', 'x').ok);
-    assert.ok(s.hasAccess('558592494552'), 'variante sem o 9');
+    assert.ok(s.hasAccess('558500010001'), 'variante sem o 9');
     assert.ok(!s.hasAccess(MARIA)); assert.equal(s.can(MARIA, 'read_meta_insights', 'x').reason, 'unknown_person');
   } finally { s.close(); rmSync(dir, { recursive: true }); }
 });

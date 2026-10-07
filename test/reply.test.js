@@ -7,11 +7,11 @@ import { createEvo } from '../lib/evo.js';
 import { world, fakeEvo, ADMIN, ENV } from './helpers.js';
 
 test('numbers: variantes só do 9 brasileiro; grupo e @lid nunca viram número; cadastro exige DDI', () => {
-  assert.deepEqual([...variants(ADMIN)].sort(), ['558592494552', ADMIN].sort());
+  assert.deepEqual([...variants(ADMIN)].sort(), ['558500010001', ADMIN].sort());
   assert.equal(numberOf(`${ADMIN}@s.whatsapp.net`), ADMIN);
   assert.equal(numberOf(`${ADMIN}@g.us`), '');
   assert.equal(numberOf('123456789012@lid'), '');
-  assert.equal(registrable('+55 85 99249-4552'), ADMIN);
+  assert.equal(registrable('+55 85 90001-0001'), ADMIN);
   assert.equal(registrable('85992494552'), null, 'sem DDI é ambíguo');
   assert.equal(registrable('123'), null);
 });

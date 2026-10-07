@@ -5,7 +5,7 @@ import { AccessStore } from '../lib/access.js';
 import { TaskStore } from '../lib/tasks.js';
 import { createApi } from '../lib/api.js';
 
-export const ADMIN = '5585992494552';
+export const ADMIN = '5585900010001';
 export const MARIA = '5585988887777';
 export const ENV = { SEND_SECRET: 'segredo-rotina', ADMIN_SENDERS: ADMIN, REPLY_ENABLED: 'true' };
 
