@@ -79,3 +79,33 @@ test('rotina simulada ponta a ponta: webhook → fila → disparo → rotina lê
     assert.equal(store.queue.stats().pending, 0);
   } finally { store.close(); w.close(); }
 });
+
+test('contrato: toda ação listada no prompt para /api/admin/* existe na API (nenhuma "invalid_action")', async () => {
+  const w = world();
+  try {
+    const t = w.task();
+    for (const [route, re] of [['/api/admin/access', /\/api\/admin\/access\s+\{"action":"([^"]+)"/], ['/api/admin/groups', /\/api\/admin\/groups\s+\{"action":"([^"]+)"/]]) {
+      const actions = re.exec(docs)?.[1]?.split('|') ?? [];
+      assert.ok(actions.length >= 3, `prompt não lista ações de ${route}`);
+      for (const action of actions) {
+        const r = await w.call(route, t.token, { action });
+        assert.notEqual(r.body.error, 'invalid_action', `${route}: ação "${action}" do prompt não existe`);
+      }
+    }
+    // o campo mode citado no prompt é o que a API de fato aceita
+    assert.match(docs, /"mode":"add\|set"/);
+  } finally { w.close(); }
+});
+
+test('contrato: em conversa privada as rotas de operação exigem client, e o prompt manda informá-lo', async () => {
+  const w = world();
+  try {
+    assert.match(docs, /SEMPRE "client"/);
+    const t = w.task();
+    for (const [path, body] of [['/api/ops/whatsapp/poll', { name: 'q', values: ['a', 'b'] }], ['/api/ops/whatsapp/react', { reaction: '👍' }], ['/api/ops/whatsapp/ghost-mention', { text: 'x', mentioned: ['5585988887777'] }], ['/api/ops/can', { op: 'create_whatsapp_group' }]]) {
+      assert.equal((await w.call(path, t.token, body)).body.error, 'client_required', `${path} sem client`);
+      const ok = await w.call(path, t.token, { ...body, client: 'worki' });
+      assert.notEqual(ok.body.error, 'client_required', `${path} com client`);
+    }
+  } finally { w.close(); }
+});
