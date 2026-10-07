@@ -10,7 +10,7 @@ const GROUP = '120363000000000001@g.us';
 
 test('alerta: desligado não grava/não envia; dedup 24h e limite global sobrevivem reinício; nunca texto por padrão', async () => {
   const w = world(); const logs = []; let a;
-  const env = { UNKNOWN_ALERT_ENABLED: 'true', OPERATOR_CONTACT: ADMIN, ALERT_PER_HOUR: '2' };
+  const env = { UNKNOWN_ALERT_ENABLED: 'true', GROUP_ALERT_ENABLED: 'true', OPERATOR_CONTACT: ADMIN, ALERT_PER_HOUR: '2' };
   const opts = { dir: w.dir, now: () => w.clock.t, log: (e, f) => logs.push([e, f]) };
   try {
     a = new Alerts(opts); await a.notify({ number: UNKNOWN, evo: w.evo }); assert.equal(w.evo.calls.length, 0);
@@ -58,9 +58,42 @@ test('alerta: dispatch exige flag; só privado sem acesso/grupo não registrado;
   try {
     await d(base)(event(`${UNKNOWN}@s.whatsapp.net`)); assert.equal(notices.length, 0);
     await d({ ...base, UNKNOWN_ALERT_ENABLED: 'true' })(event(`${UNKNOWN}@s.whatsapp.net`)); assert.equal(notices.length, 1);
-    await d({ ...base, UNKNOWN_ALERT_ENABLED: 'true' })(event(GROUP)); assert.equal(notices.length, 2); assert.equal(notices[1].text, undefined);
+    await d({ ...base, UNKNOWN_ALERT_ENABLED: 'true' })(event(GROUP)); assert.equal(notices.length, 1);
+    await d({ ...base, GROUP_ALERT_ENABLED: 'true' })(event(GROUP)); assert.equal(notices.length, 2); assert.equal(notices[1].text, undefined);
     w.access.registerGroup({ by: ADMIN, jid: GROUP, client: 'worki' });
     await d({ ...base, UNKNOWN_ALERT_ENABLED: 'true' })(event(GROUP)); assert.equal(notices.length, 2);
     assert.equal(fires, 0); assert.equal(w.evo.calls.length, 0);
+  } finally { w.close(); }
+});
+
+test('alertas de grupo têm controle independente; reserva antecede envio lento sem bloquear próximo despacho', async () => {
+  const w = world(); let a; let finish; let fires = 0;
+  const env = { PUBLIC_BASE_URL: 'https://example.com', UNKNOWN_ALERT_ENABLED: 'true', OPERATOR_CONTACT: ADMIN };
+  const event = (id, sender) => ({ key: `worki:${id}`, conv: `${sender}@s.whatsapp.net`, sender: `${sender}@s.whatsapp.net`, client: 'worki', payload: { text: 'private', receivedAt: w.clock.t } });
+  try {
+    a = new Alerts({ dir: w.dir, env, now: () => w.clock.t });
+    await a.notify({ group: GROUP, evo: w.evo }); assert.equal(w.evo.calls.length, 0);
+    const evo = { sendText: () => { assert.equal(a.rows.length, 1); return new Promise((r) => { finish = r; }); } };
+    const d = createDispatcher({ env, cfg: {}, access: w.access, tasks: w.tasks, alerts: a, evo, now: () => w.clock.t, fireImpl: async () => { fires++; return 200; } });
+    const completed = await Promise.race([d(event(1, UNKNOWN)).then(() => true), new Promise((r) => setTimeout(() => r(false), 100))]);
+    assert.equal(completed, true, 'envio lento não bloqueia dispatch');
+    await d(event(2, ADMIN)); assert.equal(fires, 1);
+    a.close(); a = new Alerts({ dir: w.dir, env, now: () => w.clock.t });
+    await a.notify({ number: UNKNOWN, evo: w.evo }); assert.equal(w.evo.calls.length, 0, 'reserva persistiu antes do envio terminar');
+    finish({ kind: 'ok' });
+    a.close(); a = new Alerts({ dir: w.dir, env: { GROUP_ALERT_ENABLED: 'true', OPERATOR_CONTACT: ADMIN }, now: () => w.clock.t });
+    await a.notify({ number: '5585988883333', evo: w.evo }); assert.equal(w.evo.calls.length, 0);
+    await a.notify({ group: GROUP, evo: w.evo }); assert.equal(w.evo.calls.length, 1);
+  } finally { finish?.({ kind: 'ok' }); a?.close(); w.close(); }
+});
+
+test('dispatch consome rejeição de alerta em background sem registrar dados do erro', async () => {
+  const w = world(); const logs = [];
+  try {
+    const d = createDispatcher({ env: { UNKNOWN_ALERT_ENABLED: 'true' }, cfg: {}, access: w.access, tasks: w.tasks, alerts: { notify: async () => { throw new Error('private-secret'); } }, log: (...args) => logs.push(args) });
+    await d({ conv: `${UNKNOWN}@s.whatsapp.net`, sender: UNKNOWN, payload: {}, client: 'worki' });
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(logs.find(([name]) => name === 'alert_failed'), ['alert_failed']);
+    assert.ok(!JSON.stringify(logs).includes('private-secret'));
   } finally { w.close(); }
 });

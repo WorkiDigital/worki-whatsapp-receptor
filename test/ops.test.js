@@ -10,6 +10,31 @@ import { world, ADMIN, MARIA } from './helpers.js';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'ops-'));
 
+test('backup opcional: history e alerts têm hashes, restauração fiel e proteção contra adulteração', () => {
+  const root = tmp(); const w = world(); const out = join(root, 'backup'); const target = join(root, 'restore');
+  try {
+    const fixtures = { 'history.jsonl': '{"conv":"private-conv","text":"private-text","at":1}\n', 'alerts.jsonl': '{"key":"fixture-hash","at":1}\n' };
+    for (const [file, text] of Object.entries(fixtures)) writeFileSync(join(w.dir, file), text + '{"partial":', { mode: 0o600 });
+    const manifest = createBackup({ dataDir: w.dir, outDir: out });
+    for (const file of Object.keys(fixtures)) {
+      const entry = manifest.files.find((f) => f.name === file);
+      assert.match(entry.sha256, /^[a-f0-9]{64}$/); assert.ok(entry.truncatedTailBytes > 0);
+    }
+    assert.equal(verifyBackup(out).ok, true);
+    const restored = restoreBackup({ backupDir: out, dataDir: target });
+    for (const [file, text] of Object.entries(fixtures)) {
+      assert.ok(restored.restored.includes(file)); assert.equal(readFileSync(join(target, file), 'utf8'), text);
+      assert.equal(statSync(join(target, file)).mode & 0o777, 0o600);
+      writeFileSync(join(out, file), text.replace('1', '2'));
+      assert.ok(verifyBackup(out).problems.includes(`${file}: hash diferente`));
+      assert.throws(() => restoreBackup({ backupDir: out, dataDir: target, confirm: true }), /backup inválido/);
+      writeFileSync(join(out, file), text);
+    }
+    const again = restoreBackup({ backupDir: out, dataDir: target, confirm: true });
+    for (const file of Object.keys(fixtures)) assert.ok(existsSync(join(again.preservedAt, file)));
+  } finally { w.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
 function populated() {
   const w = world();
   w.access.grant({ by: ADMIN, number: MARIA, name: 'Maria', clients: ['x'], ops: ['read_meta_insights'] });
