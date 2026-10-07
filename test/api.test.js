@@ -307,6 +307,49 @@ test('teste do operador: somente o contato que pede + a conta que cria o grupo; 
   }
 });
 
+test('Evolution 2.3.7: resolve participante @lid por phoneNumber e não trata o superadmin @lid como inesperado', async () => {
+  const ownerPhone = '5511999990001';
+  const requested = '5511999990002';
+  const unexpected = '5511999990003';
+  const make = (participants) => fakeEvo({
+    createGroup: () => ({ kind: 'ok', http: 201, data: { id: GROUP, subject: 'Operação teste' } }),
+    findGroupInfos: () => ({ kind: 'ok', http: 200, data: {
+      id: GROUP, subject: 'Operação teste', owner: 'owner-private@lid', participants,
+    } }),
+  });
+  const run = async (participants) => {
+    const w = world({ evo: make(participants) });
+    try {
+      const t = w.task({ sender: ADMIN });
+      return await w.call('/api/ops/whatsapp/create-group', t.token, { client: 'worki', subject: 'Operação teste', participants: [requested] });
+    } finally { w.close(); }
+  };
+  const present = await run([
+    { id: 'owner-private@lid', phoneNumber: ownerPhone, admin: 'superadmin' },
+    { id: 'requested-private@lid', phoneNumber: requested, admin: null },
+  ]);
+  assert.deepEqual(present.body.result.missing, []);
+  assert.deepEqual(present.body.result.unexpected, []);
+
+  const absent = await run([{ id: 'owner-private@lid', admin: 'superadmin' }]);
+  assert.deepEqual(absent.body.result.missing, [requested]);
+  assert.deepEqual(absent.body.result.unexpected, []);
+
+  const extra = await run([
+    { id: 'owner-private@lid', admin: 'superadmin' },
+    { id: 'unexpected-private@lid', phoneNumber: unexpected, admin: null },
+  ]);
+  assert.deepEqual(extra.body.result.missing, [requested]);
+  assert.deepEqual(extra.body.result.unexpected, [unexpected]);
+
+  const normal = await run([
+    { id: `${ownerPhone}@s.whatsapp.net`, admin: 'superadmin' },
+    { id: `${requested}@s.whatsapp.net`, admin: null },
+  ]);
+  assert.deepEqual(normal.body.result.missing, []);
+  assert.deepEqual(normal.body.result.unexpected, []);
+});
+
 test('rotação sem parada: SEND_SECRET_NEXT e EVOLUTION_WEBHOOK_SECRET_NEXT valem junto do principal', async () => {
   const w = world({ env: { SEND_SECRET: 'antigo', SEND_SECRET_NEXT: 'novo' } });
   try {
