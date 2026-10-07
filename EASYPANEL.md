@@ -1,6 +1,6 @@
 # Publicar no EasyPanel (1 serviço)
 
-Repositório: `WorkiDigital/worki-whatsapp-receptor` (privado). **Não testado no EasyPanel nem com imagem Docker construída.**
+Repositório: `WorkiDigital/worki-whatsapp-receptor` (privado). Branch implantada hoje: `claude/stoic-davinci-2x5yda` (a `main` só tem o README). **Atualizar o serviço com a nova entrega exige reimplantar; auto deploy está desligado.**
 
 ## Criar o serviço
 | Campo | Valor |
@@ -26,3 +26,9 @@ Se o EasyPanel não enxergar o repositório privado: conecte o GitHub em *Settin
 - `/health` mostra contagens (sem conteúdo). Logs sem texto, remetente, conversa, segredo ou QR.
 - Fila: diário em `/data/journal.jsonl` (contém mensagens: dado privado; definir retenção).
 - Sem `FORWARD_URL` as mensagens ficam guardadas (`pending`); com ela, o worker entrega (3 tentativas, depois `failed`).
+
+## Mudanças da versão com acessos e tarefas
+- Novas variáveis: `ADMIN_SENDERS`, `OPERATOR_CONTACT` (ver `.env.example`). Conferir que `SEND_SECRET` aparece **uma vez**.
+- O mesmo volume `/data` passa a guardar `access.jsonl` e `tasks.jsonl` além do `journal.jsonl`. Configurar backup do volume.
+- `/health` passa a incluir `tasks` (contagem por estado) e `stalled`.
+- Depois de reimplantar: conferir `/health`; pelo WhatsApp, o administrador cadastra pessoas e grupos.

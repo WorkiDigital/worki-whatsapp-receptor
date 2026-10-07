@@ -1,6 +1,6 @@
 # worki-whatsapp-receptor
 
-Receptor de webhooks da **Evolution API 2.3.7** (WhatsApp) como função da Vercel. Valida o segredo, filtra os eventos e só encaminha mensagens reais. Responde no WhatsApp **somente** pelo endpoint `/api/send`, desligado por padrão (`REPLY_ENABLED`), só para números permitidos e com limites ([ROUTINE.md](ROUTINE.md)).
+Receptor de webhooks da **Evolution API 2.3.7** (WhatsApp) como função da Vercel. Valida o segredo, filtra os eventos e só encaminha mensagens reais. Responde no WhatsApp pela API de tarefas (`/api/task/reply`), que só atende quem tem acesso registrado, e pelo `/api/send` legado (desligado por padrão, `REPLY_ENABLED`), ambos com limites ([ROUTINE.md](ROUTINE.md)).
 
 ```
 Evolution → POST /api/evolution/<cliente> → valida X-Webhook-Secret → filtra → (opcional) encaminha
@@ -41,4 +41,9 @@ Evolution → POST /api/evolution/<cliente> → valida X-Webhook-Secret → filt
 
 Guia do EasyPanel: [EASYPANEL.md](EASYPANEL.md). Respostas no WhatsApp e rotina Claude: [ROUTINE.md](ROUTINE.md).
 
-`npm test` roda os testes locais (sem rede).
+## Acessos, tarefas e operações (modo VPS)
+No modo VPS o receptor também mantém **acessos** (quem pode o quê, por cliente, com validade e revogação), **tarefas** (ciclo de vida de cada pedido, com evidências) e uma **API para o executor** (responder, criar grupo, enquete, reação, menção fantasma, administrar acessos pelo WhatsApp, registrar operações em outras plataformas, encaminhar a humano). A autorização é aplicada em código, a cada chamada. Detalhes, rotas e passos do operador: [ROUTINE.md](ROUTINE.md); prompt da rotina: [docs/routine-prompt.md](docs/routine-prompt.md).
+
+`ALLOWED_SENDERS` foi substituído por `ADMIN_SENDERS` (administradores iniciais; `ALLOWED_SENDERS` vale como compatibilidade). Os demais acessos ficam em `/data/access.jsonl`.
+
+`npm test` roda os testes locais (sem rede; Evolution e rotina simuladas).

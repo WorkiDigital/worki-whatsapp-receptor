@@ -52,3 +52,16 @@ test('worker: entrega pendentes, repete em falha e registra falha definitiva', a
     assert.deepEqual(st.queue.stats(), { pending: 0, done: 1, failed: 1 });
   } finally { st.close(); rmSync(dir, { recursive: true }); }
 });
+
+test('servidor: rotas da API exigem segredo e token da tarefa; /health mostra tarefas; admin do ambiente vem de ADMIN_SENDERS', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rcv-')); const port = 39000 + Math.floor(Math.random() * 1000);
+  const s = await boot(dir, port, { SEND_SECRET: 'seg-rotina', ADMIN_SENDERS: '5585992494552' });
+  try {
+    assert.equal((await req(port, '/api/ops/me', { body: {} })).code, 401);
+    assert.equal((await req(port, '/api/ops/me', { headers: { 'X-Send-Secret': 'seg-rotina', Authorization: 'Bearer falso' }, body: {} })).code, 401);
+    assert.equal((await req(port, '/api/admin/access', { headers: { 'X-Send-Secret': 'seg-rotina' }, body: { action: 'list' } })).code, 401);
+    assert.equal((await req(port, '/api/ops/inexistente', { headers: { 'X-Send-Secret': 'seg-rotina' }, body: {} })).code, 404);
+    const h = (await req(port, '/health', { method: 'GET' })).body;
+    assert.equal(h.ok, true); assert.deepEqual(h.tasks, {}); assert.equal(h.stalled, 0);
+  } finally { await s.stop(); rmSync(dir, { recursive: true }); }
+});
