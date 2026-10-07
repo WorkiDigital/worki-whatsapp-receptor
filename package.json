@@ -1,0 +1,10 @@
+{
+  "name": "worki-whatsapp-receptor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Receptor de webhooks da Evolution API (WhatsApp) como função Vercel.",
+  "engines": { "node": ">=20" },
+  "scripts": { "test": "node --test" },
+  "dependencies": { "@vercel/functions": "^2.0.0" }
+}
