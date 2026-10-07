@@ -25,8 +25,16 @@ Evolution → POST /api/evolution/<cliente> → valida X-Webhook-Secret → filt
 2. A URL do webhook da instância é `https://<projeto>.vercel.app/api/evolution/<cliente>`.
 3. Na instância Evolution: `webhook{enabled:true, url, byEvents:false, events:[QRCODE_UPDATED, CONNECTION_UPDATE, MESSAGES_UPSERT], headers:{"X-Webhook-Secret": <segredo>}}`.
 
+## Modo VPS / EasyPanel (fila durável) — 1 serviço
+`server.js` + `Dockerfile`: mesma rota (`POST /api/evolution/<cliente>`) e mesmo filtro, mas a mensagem real vai para uma **fila durável em disco** (diário com fsync, deduplicação por cliente + id da mensagem que sobrevive a reinício) e um worker entrega ao destino com até 3 tentativas. Sem `FORWARD_URL`, as mensagens ficam guardadas na fila.
+1. EasyPanel → *Create → App*, fonte GitHub (este repositório, branch `main`), build por **Dockerfile**.
+2. *Mounts → Volume* persistente em `/data` (obrigatório; sem ele a fila se perde a cada deploy).
+3. *Domains*: subdomínio com HTTPS apontando para a porta `3000`.
+4. Variáveis: `EVOLUTION_WEBHOOK_SECRET`, `ALLOWED_CLIENTS` (opcional: `FORWARD_URL`, `FORWARD_TOKEN`, `FORWARD_EXTRA_HEADERS`). `GET /health` mostra pendentes/concluídas/falhas (sem conteúdo).
+- Processo único (trava por pid); rodar **1 réplica**. Falhas definitivas ficam no diário; reprocessamento manual não está implementado. Não testado em Docker nem no EasyPanel.
+
 ## Limites (honestos)
-- **Sem banco:** a deduplicação é em memória (10 min, 5000 ids) e vale só por instância da função; reentregas podem passar. Mensagens não ficam guardadas: se o destino falhar, a mensagem se perde. Para garantia, adicionar armazenamento (ex.: Redis do Marketplace da Vercel) e fila.
+- **Modo Vercel sem banco:** a deduplicação é em memória (10 min, 5000 ids) e vale só por instância da função; reentregas podem passar. Mensagens não ficam guardadas: se o destino falhar, a mensagem se perde. Para garantia, adicionar armazenamento (ex.: Redis do Marketplace da Vercel) e fila.
 - **Formato do destino não validado:** o corpo enviado a `FORWARD_URL` é `{ "text": "..." }`; confirme o que o destino aceita antes de ligar.
 - **Contrato Evolution** conferido no código oficial 2.3.7; **nenhum evento real recebido ainda**; função **não publicada**.
 - Logs sem texto, remetente, conversa, segredo ou QR (testado).
