@@ -11,8 +11,9 @@ import { AccessStore } from './lib/access.js';
 import { TaskStore } from './lib/tasks.js';
 import { createEvo } from './lib/evo.js';
 import { createApi } from './lib/api.js';
-import { digits } from './lib/numbers.js';
+import { digits, numberOf } from './lib/numbers.js';
 import { History } from './lib/history.js';
+import { Alerts } from './lib/alerts.js';
 
 const env = process.env;
 const port = Number(env.PORT || 3000);
@@ -24,12 +25,13 @@ const handler = createHandler({ env, store });
 const admins = String(env.ADMIN_SENDERS || env.ALLOWED_SENDERS || '').split(',').map(digits).filter((d) => d.length >= 10);
 const access = new AccessStore({ dir, admins });
 const tasks = new TaskStore({ dir, ttlMs: Number(env.TASK_TTL_SECONDS || 7200) * 1000 });
+const log = (event, f = {}) => console.log(JSON.stringify({ event, ...f }));
 const evo = createEvo({ env });
+const alerts = new Alerts({ dir, env, log });
 const history = new History({ dir, env });
-const mentionState = { selfUnknown: env.GROUP_REQUIRE_MENTION === 'true' && !env.AGENT_NUMBER };
+const mentionState = { selfUnknown: env.GROUP_REQUIRE_MENTION === 'true' && !numberOf(env.AGENT_NUMBER) };
 const api = createApi({ env, access, tasks, evo, history });
 const sendHandler = createSendHandler({ env, access, evo, history });
-const log = (event, f = {}) => console.log(JSON.stringify({ event, ...f }));
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -59,10 +61,10 @@ const timer = setInterval(async () => {
   if (!cfg || busy) return;
   busy = true;
   try {
-    await drain(store.queue, createDispatcher({ env, cfg, access, tasks, history, mentionState, log }), log);
+    await drain(store.queue, createDispatcher({ env, cfg, access, tasks, history, evo, alerts, mentionState, log }), log);
   } catch { log('error', { code: 'drain_failed' }); } finally { busy = false; }
 }, 1000);
 
 server.listen(port, env.HOST || '0.0.0.0', () => log('listening', { port, ...store.queue.stats(), destination: Boolean(cfg) }));
-const stop = () => { clearInterval(timer); server.close(() => { history.close(); store.close(); access.close(); tasks.close(); process.exit(0); }); };
+const stop = () => { clearInterval(timer); server.close(() => { alerts.close(); history.close(); store.close(); access.close(); tasks.close(); process.exit(0); }); };
 process.on('SIGINT', stop); process.on('SIGTERM', stop);

@@ -60,4 +60,7 @@ Estado em `/data` (volume `receptor-data`): `journal.jsonl` (fila), `access.json
 # Menção em grupos
 
 `GROUP_REQUIRE_MENTION=false` por padrão. Quando ligado, só despacha menção ao `AGENT_NUMBER` ou resposta a mensagem do agente em grupo registrado. Sem número configurado usa `sender` do webhook. Sem ambos, libera o despacho autorizado e avisa `self_unknown` no log e /health. A regra não concede acesso.
+# Avisos opcionais de acesso
+
+`UNKNOWN_ALERT_ENABLED=false`. Quando ligado, o receptor avisa `OPERATOR_CONTACT` sobre privado sem acesso ou grupo não registrado, sem responder ao desconhecido. Um aviso por origem/24h e `ALERT_PER_HOUR=5` no total. Texto fica excluído salvo `ALERT_INCLUDE_TEXT=true`. O aviso não concede acesso; a liberação continua exigindo administrador autenticado e escopo explícito.
 
