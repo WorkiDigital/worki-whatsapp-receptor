@@ -39,4 +39,6 @@ Evolution → POST /api/evolution/<cliente> → valida X-Webhook-Secret → filt
 - **Contrato Evolution** conferido no código oficial 2.3.7; **nenhum evento real recebido ainda**; função **não publicada**.
 - Logs sem texto, remetente, conversa, segredo ou QR (testado).
 
+Guia do EasyPanel: [EASYPANEL.md](EASYPANEL.md).
+
 `npm test` roda os testes locais (sem rede).
