@@ -21,6 +21,9 @@ Nada de IA no código do receptor: o executor é a rotina Claude (assinatura). O
 | `/api/ops/me` | Permissões efetivas e conversa |
 | `/api/ops/can` `{op, client?}` | Pode fazer a operação? (consulta; **não** é a barreira das escritas externas: ver "Limite honesto") |
 | `/api/ops/record` `{op, client?, status, platform, ref, evidence, idempotencyKey?}` | Registra operação (`started/done/verified/failed/uncertain`; `done`/`verified` exigem evidência). **Escrita externa** (`publish_instagram`, `deploy_*`, `edit_repo`, `send_email`, campanhas) não pode ser certificada pelo executor: `done`/`verified` voltam `409 mediated_only`. Devolve `previous` |
+| `/api/ops/page/publish` `{client, slug, html, target, idempotencyKey?}` | Com flags e vínculos ativos, salva HTML estático no GitHub, publica na Vercel, relê o deployment e verifica a URL. Retorna `status=verified`, URL, deployment ID, referência do commit e hash. Com flag desligada retorna `503 operation_disabled`; o pedido não escolhe repo/projeto livremente |
+| `/api/ops/instagram/prepare` `{client, caption, mediaItems[]}` | Guarda o rascunho no receptor, devolve `draft.id` e hash completo; não chama Zernio |
+| `/api/ops/instagram/publish` `{client, draftId, contentHash, idempotencyKey?}` | Com `WRITE_ZERNIO_ENABLED=true`, publica o rascunho vinculado, usa `Idempotency-Key`, relê o post e só certifica com `platformPostUrl`; hash ausente ou divergente é recusado |
 | `/api/ops/history` `{client?, limit?}` | Pedidos anteriores (a pessoa vê os seus; administrador vê todos) |
 | `/api/ops/handoff` `{reason}` | Avisa de fato o atualizador (`OPERATOR_CONTACT`). Sem contato configurado devolve erro: **não prometa humano** |
 | `/api/ops/whatsapp/create-group` `{client?, subject, participants[], includeRequester?, description?, register?, allowDuplicate?}` | **Antes de criar, lista os grupos**: se já existe um com o mesmo nome, devolve `status: exists` e **não cria** (só `allowDuplicate:true` cria outro); se não conseguir listar, não cria. Depois de criar, **verifica** (`findGroupInfos`) e informa `missing` (pedidos ausentes) e `unexpected` (presentes que ninguém pediu, exceto a conta criadora). Idempotente |
@@ -31,15 +34,13 @@ Nada de IA no código do receptor: o executor é a rotina Claude (assinatura). O
 `/api/send` (sem token de tarefa) continua só por compatibilidade com o prompt antigo: envia apenas a quem tem acesso. Remover quando a rotina migrar.
 
 ## Operações e escopo
-Catálogo em `lib/catalog.js` (espelha `OPERATIONS` do repositório `worki-agency-agent`). `manage_access` só administradores do ambiente concedem; quem tem `manage_access` num cliente concede apenas operações que ele próprio tem, só nesse cliente; `"*"` só administrador do ambiente; revogado só volta por concessão de administrador do ambiente.
+Catálogo em `lib/catalog.js` (espelha `OPERATIONS` do repositório `worki-agency-agent`). `manage_access` só administradores do ambiente concedem; quem tem `manage_access` num cliente concede apenas operações que ele próprio tem, só nesse cliente; `"*"` só administrador do ambiente; revogado só volta por concessão de administrador do ambiente. Escritas externas exigem também vínculo em `/data/resources.json`.
 
 ## Limite honesto (escritas em Zernio, GitHub e Vercel)
-Hoje a barreira técnica cobre **WhatsApp e administração de acessos**. Para Zernio, GitHub e Vercel **nada impede em código** uma chamada direta feita pela rotina com credencial própria; `can` e `record` não são barreira. Por isso:
-- **Não coloque credenciais de escrita de Zernio, GitHub ou Vercel no ambiente da rotina** até existirem as rotas mediadas de [docs/escrita-mediada.md](docs/escrita-mediada.md). Sem credencial, a rotina não consegue escrever e relata o bloqueio.
-- O `record` recusa certificar sucesso dessas escritas (`mediated_only`).
+As escritas em Zernio, GitHub e Vercel passam pelas rotas mediadas de [docs/escrita-mediada.md](docs/escrita-mediada.md). A rotina não recebe essas credenciais. Se uma rota responder `operation_disabled`, informe o bloqueio e chame `handoff`; nunca diga que publicou. O `record` continua recusando `done`/`verified` (`mediated_only`) para escritas externas feitas fora do receptor.
 
 ## Variáveis do serviço
-Ver `.env.example`. Novas: `ADMIN_SENDERS` (cai em `ALLOWED_SENDERS` se vazio), `OPERATOR_CONTACT`, `REPLY_MAX_CHARS`, `TASK_MAX_REPLIES`, `TASK_TTL_SECONDS`. **`SEND_SECRET` deve existir uma única vez** (use `node scripts/env-audit.js` para conferir). Rotação sem parada: `SEND_SECRET_NEXT` e `EVOLUTION_WEBHOOK_SECRET_NEXT` valem junto do principal e ser exclusivo da rotina (≠ `EVOLUTION_WEBHOOK_SECRET`).
+Ver `.env.example`. Novas: `ADMIN_SENDERS` (cai em `ALLOWED_SENDERS` se vazio), `OPERATOR_CONTACT`, `REPLY_MAX_CHARS`, `TASK_MAX_REPLIES`, `TASK_TTL_SECONDS`, `WRITE_GITHUB_ENABLED`, `WRITE_VERCEL_ENABLED`, `WRITE_ZERNIO_ENABLED`, `GITHUB_TOKEN`, `VERCEL_TOKEN`, `VERCEL_TEAM_ID` e `ZERNIO_API_KEY`. As três flags começam `false`. As credenciais ficam somente no receptor; `resources.json` em `/data` vincula cliente a repositório, projeto e conta. **`SEND_SECRET` deve existir uma única vez** (use `node scripts/env-audit.js` para conferir). Rotação sem parada: `SEND_SECRET_NEXT` e `EVOLUTION_WEBHOOK_SECRET_NEXT` valem junto do principal e ser exclusivo da rotina (≠ `EVOLUTION_WEBHOOK_SECRET`).
 
 ## Acionamento da rotina
 `POST https://api.anthropic.com/v1/claude_code/routines/<trig_...>/fire`, `Authorization: Bearer <token da rotina>`, `anthropic-beta: experimental-cc-routine-2026-04-01`, `anthropic-version: 2023-06-01`, corpo `{"text": "..."}` (research preview; 30/h por rotina, 100/h na conta). O texto chega à rotina embrulhado como dado não confiável (`<routine-fire-payload>`).
@@ -53,7 +54,7 @@ Ver `.env.example`. Novas: `ADMIN_SENDERS` (cai em `ALLOWED_SENDERS` se vazio), 
 6. Reimplantar o receptor com a branch desta entrega e **cadastrar o grupo/pessoas pelo WhatsApp** (administrador).
 
 ## Recuperação e persistência
-Estado em `/data` (volume `receptor-data`): `journal.jsonl` (fila), `access.jsonl` (acessos e grupos), `tasks.jsonl` (tarefas e operações). Reiniciar reconstrói tudo por reexecução dos diários (cauda truncada é ignorada). **Backup do volume** é configuração do EasyPanel (não feita aqui); sem ele, perder o volume perde acessos e histórico. Os diários contêm dados privados: definir retenção.
+Estado em `/data` (volume `receptor-data`): `journal.jsonl` (fila), `access.jsonl` (acessos e grupos), `tasks.jsonl` (tarefas e operações), `mediated.jsonl` (idempotência das escritas) e `resources.json` (vínculos privados). Reiniciar reconstrói tudo por reexecução dos diários (cauda truncada é ignorada). **Backup do volume** é configuração do EasyPanel (não feita aqui); sem ele, perder o volume perde acessos e histórico. Os diários contêm dados privados: definir retenção.
 
 ## Histórico opcional
 
