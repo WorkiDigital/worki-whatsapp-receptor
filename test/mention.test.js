@@ -37,7 +37,21 @@ test('menção: flag bloqueia ausência, terceiros, LID sem alternativo e citaç
     assert.equal(fired.length, 8);
     await d({ ...env, AGENT_NUMBER: '' })(event({ instanceSender: `${BOT}@s.whatsapp.net` })); assert.equal(fired.length, 8);
     await d({ ...env, AGENT_NUMBER: '' })(event()); assert.equal(fired.length, 9); assert.equal(mentionState.selfUnknown, true);
-    assert.ok(logs.some(([, f]) => f.code === 'self_unknown'));
+    assert.ok(logs.some(([e, f]) => e === 'mention_filter_inactive' && f.code === 'self_unknown'));
+    assert.ok(!logs.some(([e, f]) => e === 'skipped' && f.code === 'self_unknown'));
     for (const s of ['private-text', ADMIN, BOT, GROUP]) assert.ok(!JSON.stringify(logs).includes(s));
   } finally { w.close(); }
+});
+
+test('menção: fixture data.contextInfo é fallback; contexto específico prevalece sem perder campos', () => {
+  for (const type of ['conversation', 'extendedTextMessage', 'imageMessage', 'videoMessage']) {
+    const msg = parseEvolutionEvent({ event: 'messages.upsert', data: {
+      key: { id: type, remoteJid: GROUP, participant: `${ADMIN}@s.whatsapp.net` },
+      contextInfo: { mentionedJid: [`${BOT}@s.whatsapp.net`], participant: `${BOT}@s.whatsapp.net`, stanzaId: 'quoted' },
+      message: type === 'conversation' ? { conversation: 'oi' } : { [type]: { caption: 'oi', contextInfo: { participant: 'override@s.whatsapp.net' } } },
+    } });
+    assert.deepEqual(msg.mentionedJid, [`${BOT}@s.whatsapp.net`]);
+    assert.equal(msg.quotedMessage, true);
+    assert.equal(msg.participant, type === 'conversation' ? `${BOT}@s.whatsapp.net` : 'override@s.whatsapp.net');
+  }
 });

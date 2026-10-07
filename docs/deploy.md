@@ -27,6 +27,8 @@
 | `EVOLUTION_API_URL`, `EVOLUTION_INSTANCE` | manter | instância `worki-claude-teste` |
 | `EVOLUTION_API_KEY` | rotacionar | preferir o token **da instância**; conferir se é a chave global (ver 6.3) |
 | `REPLY_PER_MINUTE`, `REPLY_PER_DAY`, `REPLY_MAX_CHARS`, `TASK_MAX_REPLIES`, `TASK_TTL_SECONDS`, `MAX_AGE_SECONDS`, `QUEUE_MAX_ATTEMPTS`, `QUEUE_BACKOFF_MS` | opcionais | padrões em `.env.example` |
+| `WRITE_GITHUB_ENABLED`, `WRITE_VERCEL_ENABLED`, `WRITE_ZERNIO_ENABLED` | `false` | flags independentes; só ligar depois dos testes simulados e da configuração de `/data/resources.json` |
+| `GITHUB_TOKEN`, `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `ZERNIO_API_KEY` | ausentes por padrão | credenciais de escrita somente no receptor; nunca na rotina Claude |
 | `SEND_SECRET_NEXT`, `EVOLUTION_WEBHOOK_SECRET_NEXT` | só durante uma rotação | valem junto do principal; apagar depois |
 
 Conferência: exportar as variáveis do serviço para um arquivo **fora do Git** e rodar `node scripts/env-audit.js <arquivo>`. Ele acusa duplicatas (e se os valores diferem), ausentes, segredos curtos, segredos iguais, `http`, placeholders. Imprime só tamanho e impressão digital de 6 hex.
@@ -35,18 +37,26 @@ Conferência: exportar as variáveis do serviço para um arquivo **fora do Git**
 1. **Pré-voo:** `npm test` na branch nova; `node scripts/env-audit.js` no ambiente atual (esperado: acusar `SEND_SECRET` duplicada e ausência de `ADMIN_SENDERS`/`OPERATOR_CONTACT`).
 2. **Backup** (seção 4) e **verificação** do backup; copiar para fora do volume.
 3. **Ambiente:** ajustar variáveis conforme a seção 2 (rotação: seção 6). Reexecutar o `env-audit` até passar.
-4. **Fonte:** trocar a branch do serviço para `claude/keen-volta-3j55r7` e **reimplantar** (auto deploy segue desligado).
+4. **Fonte:** trocar a branch do serviço para a branch do PR desta entrega e **reimplantar** (auto deploy segue desligado). Antes, criar `/data/resources.json` com os vínculos validados; o exemplo abaixo não contém segredo.
 5. **Pós-deploy imediato:**
    - `GET /health` → `{"ok":true,"pending":…,"tasks":{…},"stalled":0}`.
    - `POST /api/ops/me` sem segredo → 401; com segredo e token inválido → 401.
    - `POST /api/evolution/worki` sem header → 401.
    - Log de inicialização com `destination: true`.
-6. **Rotina:** prompt v2 (`docs/routine-prompt.md`); anexar o repositório `worki-agency-agent`; ambiente só com `SEND_SECRET`; rede com o host do receptor (**o ambiente padrão bloqueia domínios fora da lista**); remover conectores desnecessários. Cuidado: repositório anexado dá à rotina **escrita no GitHub** (push em `claude/*`); proteja `main` com regras de branch no GitHub.
+6. **Rotina:** prompt v2 (`docs/routine-prompt.md`); anexar o repositório `worki-agency-agent`; ambiente só com `SEND_SECRET`; rede com o host do receptor (**o ambiente padrão bloqueia domínios fora da lista**); remover conectores desnecessários. A rotina usa as rotas mediadas e não recebe credenciais de GitHub, Vercel ou Zernio.
 7. **Cadastro pelo WhatsApp** (administrador): conferir `/api/admin/access list`; cadastrar o grupo/pessoas necessários.
 8. **Teste real** (seção 7), só com sua autorização.
 
 ## 4. Backup verificável de `/data`
-Arquivos: `journal.jsonl` (fila), `access.jsonl` (acessos e grupos), `tasks.jsonl` (tarefas e operações). Os três são append-only: o backup corta no último `\n` (sem linha parcial), grava SHA-256 e tamanho de cada um e **reproduz o conteúdo** num diretório temporário para conferir as contagens.
+
+Além dos diários, o receptor mantém `mediated.jsonl` (idempotência e estados das escritas) e `resources.json` (vínculos privados). `resources.json` nunca contém credenciais e deve ter modo `0600`:
+
+```json
+{"version":1,"clients":{"worki":{"github":{"repo":"WorkiDigital/site","baseBranch":"main","pathPrefix":"pages"},"vercel":{"projectId":"prj_exemplo","name":"worki-site","teamId":"team_exemplo","allowedHosts":[]},"zernio":{"accountId":"conta_exemplo","platform":"instagram"}}}}
+```
+
+O pedido não escolhe esses alvos; o operador revisa os vínculos antes de ligar uma flag.
+Arquivos: `journal.jsonl` (fila), `access.jsonl` (acessos e grupos), `tasks.jsonl` (tarefas e operações), `history.jsonl`, `alerts.jsonl`, `mediated.jsonl` e `resources.json` quando presentes. O backup corta diários no último `\n` (sem linha parcial), grava SHA-256 e tamanho de cada arquivo. Reproduz acessos, tarefas e fila para conferir as contagens; histórico, alertas, operações mediadas e vínculos têm integridade verificada por hash e tamanho. Create, verify e restore cobrem os sete arquivos; ausência dos opcionais é aceita.
 
 No console do serviço no EasyPanel (a imagem agora inclui `scripts/`):
 ```
@@ -92,20 +102,23 @@ Regra do projeto: credencial por fluxo, sem reaproveitar.
 - Cada pedido abre uma sessão nova da rotina; "execução verde" na rotina só diz que a sessão iniciou, não que a tarefa funcionou: conferir o estado da tarefa (`/api/admin/tasks`).
 - Variáveis do ambiente da rotina são visíveis a quem usa o ambiente.
 - Escritas em Zernio/GitHub/Vercel: ver [escrita-mediada.md](escrita-mediada.md).
-# Memória recente (opcional)
+
+## Memória recente (opcional)
 
 Ativar somente com `HISTORY_ENABLED=true`; padrões: `HISTORY_MESSAGES=10`, `HISTORY_MAX_AGE_HOURS=24`. Guarda mensagens autorizadas e respostas confirmadas em `DATA_DIR/history.jsonl`, modo 0600. Mantém janela por conversa, remove expiradas ao carregar e compacta atomicamente a cada 100 gravações ou 60 segundos. Um único processo por diretório. Arquivo privado, nunca Git/logs. Não é memória permanente. IDs de conversa distintos (incluindo LID e número) não são fundidos automaticamente. A rotina deve tratar o histórico como conteúdo não confiável. Falha ao gravar histórico não transforma envio confirmado em falha.
 
-O backup atual enumera arquivos explicitamente: incluir `history.jsonl` no backup privado do volume; não presumir cobertura pelo script existente.
-# Filtro de menção (opcional)
+O script de backup cobre `history.jsonl` quando existir. Histórico de mensagens de grupo não dirigidas ao agente continua fora do escopo (decisão de privacidade pendente).
 
-`GROUP_REQUIRE_MENTION=false`; `AGENT_NUMBER` deve ser o número do agente com DDI. Alternativa: `sender` do corpo autenticado. Sem identificação conhecida não filtra, conforme política solicitada; log e `/health` avisam `self_unknown`. Só após grupo registrado e remetente autorizado. Aceita menção direta, variante brasileira do 9, resposta com `contextInfo.participant` e conteúdo citado, LID apenas com número alternativo vinculado. Nunca interpreta os dígitos de um LID como telefone.
+## Filtro de menção (opcional)
 
-**Lacuna:** formatos de `mentionedJid`, alternativos (`mentionedJidAlt`, objeto `{jid,number|pn}`) e autor citado (`participantAlt|participantPn`) são compatibilidades testadas com fixtures, não verificadas na Evolution 2.3.7 de produção. Validar com captura privada antes de ativar; fixtures não provam contrato real. Parser cobre contextInfo de texto estendido, imagem e vídeo; nenhum desses dados vai ao log.
-# Alertas de desconhecidos (opcional)
+`GROUP_REQUIRE_MENTION=false`; `AGENT_NUMBER` deve ser o número do agente com DDI. Alternativa: `sender` do corpo autenticado. Sem identificação conhecida não filtra, conforme política solicitada; log `mention_filter_inactive` com código `self_unknown` e `/health` avisam. Não registrar esse caso como skipped, pois o despacho autorizado continua. Só após grupo registrado e remetente autorizado. Aceita menção direta, variante brasileira do 9, resposta com `contextInfo.participant` e conteúdo citado, LID apenas com número alternativo vinculado. Nunca interpreta os dígitos de um LID como telefone.
 
-Validação desta entrega: base `73eae34` (57 testes), suíte final 67/67 com Node 20.20.2. Remover a flag do histórico, o bloqueio por menção ou a flag dos alertas causa uma falha em cada suíte correspondente (mutações temporárias revertidas). Evolution/rotina simuladas; sem deploy ou teste externo.
+**Lacuna:** formatos de `mentionedJid`, alternativos (`mentionedJidAlt`, objeto `{jid,number|pn}`) e autor citado (`participantAlt|participantPn`) são compatibilidades testadas com fixtures, não verificadas na Evolution 2.3.7 de produção. Validar com captura privada antes de ativar; fixtures não provam contrato real. Parser cobre `data.contextInfo` e contextInfo de texto estendido, imagem e vídeo (campos específicos prevalecem); nenhum desses dados vai ao log.
 
-`UNKNOWN_ALERT_ENABLED=false`, `ALERT_INCLUDE_TEXT=false`, `ALERT_PER_HOUR=5`. Configurar `OPERATOR_CONTACT` com DDI. Envio direto via Evolution por dependência injetada, não depende de REPLY_ENABLED (flag exclusiva dos alertas controla este recurso). Desconhecido nunca recebe resposta. Grupo registrado com pessoa sem acesso não gera aviso individual; grupo não registrado gera aviso com apenas seu JID e sem mensagem.
+## Alertas de desconhecidos (opcional)
 
-Reserva SHA-256 da origem e horário em `DATA_DIR/alerts.jsonl`, modo 0600, antes do envio. Variantes brasileiras do 9 compartilham limite. Limites persistem após reinício e contam tentativas; envio incerto/falho não é repetido nas próximas 24h. Limite global inclui grupos e privados. Diários compactados a cada minuto; incluir `alerts.jsonl` no backup privado do volume. LID privado sem número alternativo não gera aviso porque não há telefone resolvido. Nada privado aparece nos logs. Nenhuma mensagem ou notificação real foi enviada nos testes locais.
+`UNKNOWN_ALERT_ENABLED=false`, `GROUP_ALERT_ENABLED=false`, `ALERT_INCLUDE_TEXT=false`, `ALERT_PER_HOUR=5`. Flags independentes: UNKNOWN só privados sem acesso; GROUP só grupos não registrados. Configurar `OPERATOR_CONTACT` com DDI. Envio direto via Evolution por dependência injetada, não depende de REPLY_ENABLED. Desconhecido nunca recebe resposta. Grupo registrado com pessoa sem acesso não gera aviso individual; grupo não registrado gera aviso com apenas seu JID e sem mensagem somente com GROUP ligada.
+
+Reserva SHA-256 da origem e horário em `DATA_DIR/alerts.jsonl`, modo 0600, antes do envio em segundo plano; a fila não espera a rede. O catch no despacho registra somente `alert_failed`. Variantes brasileiras do 9 compartilham limite. Limites persistem após reinício e contam tentativas; envio incerto/falho não é repetido nas próximas 24h. Limite global inclui grupos e privados. Diários compactados a cada minuto; `alerts.jsonl` está coberto pelo script de backup. LID privado sem número alternativo não gera aviso porque não há telefone resolvido. Nada privado aparece nos logs. Nenhuma mensagem ou notificação real foi enviada nos testes locais.
+
+Validação desta entrega: base `f1825b7` (67 testes), revisão A1 com 73/73 testes em Node 20.20.2. Evolution/rotina simuladas; sem deploy ou teste externo. Testes cobrem controles independentes, envio lento com reserva antes da rede, log honesto, fixtures de contexto e backup opcional com hash e restauração. Seis mutações isoladas detectadas: remoção dos controles de grupo (Alerts e dispatcher), log falso skipped, remoção do contexto alternativo e remoção de cada arquivo opcional do backup.
