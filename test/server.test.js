@@ -55,7 +55,7 @@ test('worker: entrega pendentes, repete em falha e registra falha definitiva', a
 
 test('servidor: rotas da API exigem segredo e token da tarefa; /health mostra tarefas; admin do ambiente vem de ADMIN_SENDERS', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'rcv-')); const port = 39000 + Math.floor(Math.random() * 1000);
-  const s = await boot(dir, port, { SEND_SECRET: 'seg-rotina', ADMIN_SENDERS: '5585900010001' });
+  const s = await boot(dir, port, { SEND_SECRET: 'seg-rotina', ADMIN_SENDERS: '5585988880001' });
   try {
     assert.equal((await req(port, '/api/ops/me', { body: {} })).code, 401);
     assert.equal((await req(port, '/api/ops/me', { headers: { 'X-Send-Secret': 'seg-rotina', Authorization: 'Bearer falso' }, body: {} })).code, 401);

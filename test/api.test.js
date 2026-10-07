@@ -246,7 +246,7 @@ test('logs da API não vazam texto, números, JIDs, token nem segredo', async ()
 });
 
 test('handoff: só promete humano se o aviso foi enviado de fato; sem contato configurado falha explicitamente', async () => {
-  const w = world({ env: { OPERATOR_CONTACT: '+55 85 90001-0001' } });
+  const w = world({ env: { OPERATOR_CONTACT: '+55 85 98888-0001' } });
   const semContato = world();
   try {
     w.access.grant({ by: ADMIN, number: MARIA, clients: ['x'], ops: ['read_meta_insights'] });
