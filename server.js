@@ -14,6 +14,8 @@ import { createApi } from './lib/api.js';
 import { digits, numberOf } from './lib/numbers.js';
 import { History } from './lib/history.js';
 import { Alerts } from './lib/alerts.js';
+import { loadResources } from './lib/resources.js';
+import { createMediated } from './lib/mediated.js';
 
 const env = process.env;
 const port = Number(env.PORT || 3000);
@@ -30,7 +32,10 @@ const evo = createEvo({ env });
 const alerts = new Alerts({ dir, env, log });
 const history = new History({ dir, env });
 const mentionState = { selfUnknown: env.GROUP_REQUIRE_MENTION === 'true' && !numberOf(env.AGENT_NUMBER) };
-const api = createApi({ env, access, tasks, evo, history });
+let mediated;
+try { mediated = createMediated({ env, dir, resources: loadResources(dir), tasks, access }); }
+catch (e) { log('error', { code: e.code === 'resources_invalid' ? 'resources_invalid' : 'mediated_init_failed' }); mediated = null; }
+const api = createApi({ env, access, tasks, evo, history, mediated });
 const sendHandler = createSendHandler({ env, access, evo, history });
 
 const server = http.createServer((req, res) => {
@@ -66,5 +71,5 @@ const timer = setInterval(async () => {
 }, 1000);
 
 server.listen(port, env.HOST || '0.0.0.0', () => log('listening', { port, ...store.queue.stats(), destination: Boolean(cfg) }));
-const stop = () => { clearInterval(timer); server.close(() => { alerts.close(); history.close(); store.close(); access.close(); tasks.close(); process.exit(0); }); };
+const stop = () => { clearInterval(timer); server.close(() => { mediated?.close(); alerts.close(); history.close(); store.close(); access.close(); tasks.close(); process.exit(0); }); };
 process.on('SIGINT', stop); process.on('SIGTERM', stop);
