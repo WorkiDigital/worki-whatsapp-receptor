@@ -170,7 +170,6 @@ test('Vercel: espera padrão cobre ~60s, aceita proteção explicitamente e só 
   } finally { waited.close(); }
 });
 
-
 test('idempotência mediada: cliente e hash entram na chave; nova chave não duplica após reconciliação', async () => {
   const otherResources = { version: 1, clients: { ...DEFAULT_RESOURCES.clients, other: { ...DEFAULT_RESOURCES.clients.worki, github: { ...DEFAULT_RESOURCES.clients.worki.github, repo: 'WorkiDigital/other' }, vercel: { ...DEFAULT_RESOURCES.clients.worki.vercel, projectId: 'prj_other', name: 'other-site' }, zernio: { ...DEFAULT_RESOURCES.clients.worki.zernio, accountId: 'acct_other' } } } };
   let deploys = 0;
@@ -193,4 +192,123 @@ test('idempotência mediada: cliente e hash entram na chave; nova chave não dup
     assert.equal(first.code, 200); assert.equal(second.code, 200); assert.notEqual(second.body.replayed, true); assert.equal(deploys, 2);
   } finally { w.close(); }
 
+  let pageOp; let postCalls = 0; let listCalls = 0;
+  const reconcileFetch = async (url, init = {}) => {
+    if (url.includes('/git/ref/heads/')) return { status: 200, json: async () => ({ object: { sha: 'base' } }) };
+    if (url.includes('/git/commits/base')) return { status: 200, json: async () => ({ tree: { sha: 'tree' } }) };
+    if (url.endsWith('/git/trees')) return { status: 201, json: async () => ({ sha: 'tree-new' }) };
+    if (url.endsWith('/git/commits')) return { status: 201, json: async () => ({ sha: 'commit-new' }) };
+    if (url.includes('/git/refs/heads/')) return { status: 200, json: async () => ({ ref: 'refs/heads/agent' }) };
+    if (url.endsWith('/deployments')) { postCalls++; pageOp = JSON.parse(init.body).meta.workiOperation; throw new Error('lost response'); }
+    if (url.includes('/v7/deployments?')) { listCalls++; return { status: 200, json: async () => ({ deployments: [{ uid: 'dpl-existing', meta: { workiOperation: pageOp, workiPageDigest: 'digest-placeholder' } }] }) }; }
+    if (url.includes('/deployments/dpl-existing')) return { status: 200, json: async () => ({ readyState: 'READY', url: 'reconciled.vercel.app' }) };
+    if (url === 'https://reconciled.vercel.app') return { ok: true, status: 200, json: async () => ({}) };
+    throw new Error('unexpected fake URL');
+  };
+  // The digest is captured from the deployment body so the provider listing can prove the same content.
+  const original = reconcileFetch;
+  const w2 = setup({ flags: { WRITE_GITHUB_ENABLED: 'true', WRITE_VERCEL_ENABLED: 'true', VERCEL_POLL_MS: '0', GITHUB_TOKEN: secret(), VERCEL_TOKEN: secret() }, fetchImpl: async (url, init = {}) => {
+    if (url.endsWith('/deployments') && init.method === 'POST') {
+      const body = JSON.parse(init.body); pageOp = body.meta.workiOperation; reconcileFetch.digest = body.meta.workiPageDigest;
+    }
+    const result = await original(url, init);
+    if (url.includes('/v7/deployments?') && result?.json) {
+      const data = await result.json(); return { status: 200, json: async () => ({ deployments: [{ uid: 'dpl-existing', meta: { workiOperation: pageOp, workiPageDigest: reconcileFetch.digest } }] }) };
+    }
+    return result;
+  } });
+  try {
+    const first = await w2.call('/api/ops/page/publish', { client: 'worki', slug: 'uncertain', html: '<title>Uncertain</title>', idempotencyKey: 'key-a' });
+    const second = await w2.call('/api/ops/page/publish', { client: 'worki', slug: 'uncertain', html: '<title>Uncertain</title>', idempotencyKey: 'key-b' });
+    assert.equal(first.code, 504); assert.equal(second.code, 200); assert.equal(second.body.reconciled, true); assert.equal(postCalls, 1); assert.equal(listCalls, 1);
+  } finally { w2.close(); }
 });
+
+test('Instagram: chave nova reconcilia publicação incerta pelo metadata sem repetir o POST', async () => {
+  let operation; let contentHash; let posts = 0; let lists = 0; let reads = 0;
+  const fetchImpl = async (url, init = {}) => {
+    if (init.method === 'POST' && url.endsWith('/v1/posts')) {
+      posts++;
+      const body = JSON.parse(init.body);
+      operation = body.metadata.workiOperation;
+      contentHash = body.metadata.workiContentHash;
+      throw new Error('resposta perdida');
+    }
+    if (url.startsWith('https://zernio.com/api/v1/posts?')) {
+      lists++;
+      return { status: 200, json: async () => ({ posts: [{ _id: 'post-reconciled', metadata: { workiOperation: operation, workiContentHash: contentHash }, content: 'Oferta Incerta', platforms: [{ platform: 'instagram', accountId: 'acct_worki' }] }] }) };
+    }
+    if (url.endsWith('/v1/posts/post-reconciled')) {
+      reads++;
+      return { status: 200, json: async () => ({ _id: 'post-reconciled', status: 'published', content: 'Oferta Incerta', platforms: [{ platform: 'instagram', accountId: 'acct_worki', platformPostUrl: 'https://instagram.com/p/reconciled' }] }) };
+    }
+    throw new Error(`unexpected fake URL ${url}`);
+  };
+  const w = setup({ flags: { WRITE_ZERNIO_ENABLED: 'true', ZERNIO_API_KEY: secret() }, fetchImpl });
+  try {
+    const draft = await w.call('/api/ops/instagram/prepare', { client: 'worki', caption: 'Oferta Incerta', mediaItems: [{ type: 'image', url: 'https://cdn.example.test/a.jpg' }] });
+    const base = { client: 'worki', draftId: draft.body.draft.id, contentHash: draft.body.draft.contentHash };
+    const first = await w.call('/api/ops/instagram/publish', { ...base, idempotencyKey: 'first-key' });
+    const second = await w.call('/api/ops/instagram/publish', { ...base, idempotencyKey: 'different-key' });
+    assert.equal(first.code, 504);
+    assert.equal(second.code, 200);
+    assert.equal(second.body.reconciled, true);
+    assert.equal(second.body.result.postId, 'post-reconciled');
+    assert.equal(posts, 1);
+    assert.equal(lists, 1);
+    assert.equal(reads, 1);
+  } finally { w.close(); }
+});
+
+test('recuperação reavalia operação incerta ao iniciar e marca a evidência encontrada', async () => {
+  let operation; let digest; let deploymentLists = 0; let deploymentReads = 0;
+  const fetchImpl = async (url, init = {}) => {
+    if (url.includes('/git/ref/heads/')) return { status: 200, json: async () => ({ object: { sha: 'base' } }) };
+    if (url.includes('/git/commits/base')) return { status: 200, json: async () => ({ tree: { sha: 'tree' } }) };
+    if (url.endsWith('/git/trees')) return { status: 201, json: async () => ({ sha: 'tree-new' }) };
+    if (url.endsWith('/git/commits')) return { status: 201, json: async () => ({ sha: 'commit-new' }) };
+    if (url.includes('/git/refs/heads/')) return { status: 200, json: async () => ({ ref: 'refs/heads/agent' }) };
+    if (url.endsWith('/deployments')) {
+      const body = JSON.parse(init.body); operation = body.meta.workiOperation; digest = body.meta.workiPageDigest;
+      throw new Error('resposta perdida');
+    }
+    if (url.includes('/v7/deployments?')) {
+      deploymentLists++;
+      return { status: 200, json: async () => ({ deployments: [{ uid: 'dpl-recovered', meta: { workiOperation: operation, workiPageDigest: digest } }] }) };
+    }
+    if (url.includes('/deployments/dpl-recovered')) {
+      deploymentReads++;
+      return { status: 200, json: async () => ({ readyState: 'READY', url: 'recovered.vercel.app' }) };
+    }
+    if (url === 'https://recovered.vercel.app') return { ok: true, status: 200, json: async () => ({}) };
+    throw new Error(`unexpected fake URL ${url}`);
+  };
+  const w = setup({ flags: { WRITE_GITHUB_ENABLED: 'true', WRITE_VERCEL_ENABLED: 'true', VERCEL_POLL_MS: '0', GITHUB_TOKEN: secret(), VERCEL_TOKEN: secret() }, fetchImpl });
+  try {
+    const first = await w.call('/api/ops/page/publish', { client: 'worki', slug: 'recover', html: '<title>Recover</title>', idempotencyKey: 'first' });
+    assert.equal(first.code, 504);
+    const recovered = await w.mediated.recover();
+    assert.deepEqual(recovered, { scanned: 1, found: 1, unknown: 0 });
+    assert.equal(deploymentLists, 1);
+    assert.equal(deploymentReads, 1);
+    const replay = await w.call('/api/ops/page/publish', { client: 'worki', slug: 'recover', html: '<title>Recover</title>', idempotencyKey: 'new-key' });
+    assert.equal(replay.code, 200);
+    assert.equal(replay.body.replayed, true);
+  } finally { w.close(); }
+});
+
+test('lista vazia não prova ausência nem permite duplicar publicação incerta', async () => {
+  let posts = 0;
+  const w = setup({ flags: { WRITE_ZERNIO_ENABLED: 'true', ZERNIO_API_KEY: secret() }, fetchImpl: async (_url, init) => {
+    if (init.method === 'POST') { posts++; throw new Error('timeout'); }
+    return { status: 200, json: async () => ({ posts: [], pagination: { next: 2 } }) };
+  } });
+  try {
+    const d = (await w.call('/api/ops/instagram/prepare', { client: 'worki', caption: 'Teste', mediaItems: [{ type: 'image', url: 'https://cdn.example.test/a.jpg' }] })).body.draft;
+    const body = { client: 'worki', draftId: d.id, contentHash: d.contentHash };
+    assert.equal((await w.call('/api/ops/instagram/publish', body)).code, 504);
+    assert.equal((await w.call('/api/ops/instagram/publish', { ...body, idempotencyKey: 'outra' })).code, 409);
+    assert.equal(posts, 1);
+  } finally { w.close(); }
+});
+

@@ -35,6 +35,7 @@ const mentionState = { selfUnknown: env.GROUP_REQUIRE_MENTION === 'true' && !num
 let mediated;
 try { mediated = createMediated({ env, dir, resources: loadResources(dir), tasks, access }); }
 catch (e) { log('error', { code: e.code === 'resources_invalid' ? 'resources_invalid' : 'mediated_init_failed' }); mediated = null; }
+if (mediated) void mediated.recover().then((r) => { if (r.scanned) log('mediated_recovery', { scanned: r.scanned, found: r.found, unknown: r.unknown }); }).catch(() => log('error', { code: 'mediated_recovery_failed' }));
 const api = createApi({ env, access, tasks, evo, history, mediated });
 const sendHandler = createSendHandler({ env, access, evo, history });
 
