@@ -29,6 +29,9 @@
 | `REPLY_PER_MINUTE`, `REPLY_PER_DAY`, `REPLY_MAX_CHARS`, `TASK_MAX_REPLIES`, `TASK_TTL_SECONDS`, `MAX_AGE_SECONDS`, `QUEUE_MAX_ATTEMPTS`, `QUEUE_BACKOFF_MS` | opcionais | padrões em `.env.example` |
 | `WRITE_GITHUB_ENABLED`, `WRITE_VERCEL_ENABLED`, `WRITE_ZERNIO_ENABLED` | `false` | flags independentes; só ligar depois dos testes simulados e da configuração de `/data/resources.json` |
 | `GITHUB_TOKEN`, `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, `ZERNIO_API_KEY` | ausentes por padrão | credenciais de escrita somente no receptor; nunca na rotina Claude |
+| `VERCEL_POLL_ATTEMPTS`, `VERCEL_POLL_MS` | `120`, `500` | janela padrão de aproximadamente 60 s; limites são validados pelo receptor |
+| `VERCEL_ACCEPT_PROTECTED` | `false` | só aceite 401/403 de preview `READY` como deployment protegido quando explicitamente `true`; não prova acesso público |
+| `INSTAGRAM_DRAFT_TTL_HOURS` | `24` | validade do rascunho; remetente e cliente ficam vinculados |
 | `SEND_SECRET_NEXT`, `EVOLUTION_WEBHOOK_SECRET_NEXT` | só durante uma rotação | valem junto do principal; apagar depois |
 
 Conferência: exportar as variáveis do serviço para um arquivo **fora do Git** e rodar `node scripts/env-audit.js <arquivo>`. Ele acusa duplicatas (e se os valores diferem), ausentes, segredos curtos, segredos iguais, `http`, placeholders. Imprime só tamanho e impressão digital de 6 hex.
@@ -37,7 +40,7 @@ Conferência: exportar as variáveis do serviço para um arquivo **fora do Git**
 1. **Pré-voo:** `npm test` na branch nova; `node scripts/env-audit.js` no ambiente atual (esperado: acusar `SEND_SECRET` duplicada e ausência de `ADMIN_SENDERS`/`OPERATOR_CONTACT`).
 2. **Backup** (seção 4) e **verificação** do backup; copiar para fora do volume.
 3. **Ambiente:** ajustar variáveis conforme a seção 2 (rotação: seção 6). Reexecutar o `env-audit` até passar.
-4. **Fonte:** trocar a branch do serviço para a branch do PR desta entrega e **reimplantar** (auto deploy segue desligado). Antes, criar `/data/resources.json` com os vínculos validados; o exemplo abaixo não contém segredo.
+4. **Fonte:** trocar a branch do serviço para a branch do PR desta entrega e **reimplantar** (auto deploy segue desligado). Antes, criar `/data/resources.json` com os vínculos validados; o exemplo abaixo não contém segredo. Para limitar mídia de rascunhos, acrescente `mediaAllowedHosts` ao cliente; sem esse campo a mídia mantém o comportamento atual.
 5. **Pós-deploy imediato:**
    - `GET /health` → `{"ok":true,"pending":…,"tasks":{…},"stalled":0}`.
    - `POST /api/ops/me` sem segredo → 401; com segredo e token inválido → 401.
@@ -56,6 +59,15 @@ Além dos diários, o receptor mantém `mediated.jsonl` (idempotência e estados
 ```
 
 O pedido não escolhe esses alvos; o operador revisa os vínculos antes de ligar uma flag.
+
+Exemplo com allowlist opcional de mídia:
+
+```json
+{"version":1,"clients":{"worki":{"github":{"repo":"WorkiDigital/site","baseBranch":"main","pathPrefix":"pages"},"vercel":{"projectId":"prj_exemplo","name":"worki-site","teamId":"team_exemplo","allowedHosts":["site.cliente.example"]},"zernio":{"accountId":"conta_exemplo","platform":"instagram"},"mediaAllowedHosts":["cdn.cliente.example"]}}}
+```
+
+O receptor exige `https://` para mídia e compara o host exatamente com a
+allowlist. O vínculo nunca contém token.
 Arquivos: `journal.jsonl` (fila), `access.jsonl` (acessos e grupos), `tasks.jsonl` (tarefas e operações), `history.jsonl`, `alerts.jsonl`, `mediated.jsonl` e `resources.json` quando presentes. O backup corta diários no último `\n` (sem linha parcial), grava SHA-256 e tamanho de cada arquivo. Reproduz acessos, tarefas e fila para conferir as contagens; histórico, alertas, operações mediadas e vínculos têm integridade verificada por hash e tamanho. Create, verify e restore cobrem os sete arquivos; ausência dos opcionais é aceita.
 
 No console do serviço no EasyPanel (a imagem agora inclui `scripts/`):
@@ -102,6 +114,22 @@ Regra do projeto: credencial por fluxo, sem reaproveitar.
 - Cada pedido abre uma sessão nova da rotina; "execução verde" na rotina só diz que a sessão iniciou, não que a tarefa funcionou: conferir o estado da tarefa (`/api/admin/tasks`).
 - Variáveis do ambiente da rotina são visíveis a quem usa o ambiente.
 - Escritas em Zernio/GitHub/Vercel: ver [escrita-mediada.md](escrita-mediada.md).
+
+## 9. Verificação adicional das escritas mediadas
+
+Antes de ligar uma flag, confirme no serviço de homologação:
+
+1. uma página espera até `READY`, relê a URL e, quando aplicável, distingue
+   deployment protegido de acesso público;
+2. uma segunda chave com o mesmo conteúdo retorna a evidência existente, sem
+   novo POST;
+3. uma publicação do Instagram só pode ser feita pelo remetente do rascunho,
+   dentro da validade e com hosts de mídia permitidos;
+4. reiniciar o receptor reavalia estados `started`/`uncertain` e não repete
+   uma escrita sem confirmação de ausência.
+
+Os testes automatizados dessas situações usam provedores simulados. Nenhum
+resultado desta seção autoriza deploy ou publicação real.
 
 ## Memória recente (opcional)
 
