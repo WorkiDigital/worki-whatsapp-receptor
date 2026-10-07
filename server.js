@@ -7,8 +7,10 @@ import { createStore, drain } from './lib/store.js';
 import { forwardConfig } from './lib/forward.js';
 import { createSendHandler } from './lib/send.js';
 import { createDispatcher } from './lib/dispatch.js';
+import { validateEnv } from './lib/env.js';
 
 const env = process.env;
+try { validateEnv(env); } catch (e) { console.error(e.message); process.exit(1); }
 const port = Number(env.PORT || 3000);
 const dir = env.DATA_DIR || '/data';
 const store = createStore(dir);
