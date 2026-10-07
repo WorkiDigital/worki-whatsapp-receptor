@@ -13,17 +13,18 @@ const admin = '5585988880001';
 const secret = () => randomBytes(32).toString('hex');
 const DEFAULT_RESOURCES = { version: 1, clients: { worki: { zernio: { accountId: 'acct_worki', platform: 'instagram' }, github: { repo: 'WorkiDigital/site', baseBranch: 'main', pathPrefix: 'pages' }, vercel: { projectId: 'prj_worki', name: 'worki-site', allowedHosts: [] } } } };
 
-function setup({ flags = {}, resources = DEFAULT_RESOURCES, fetchImpl } = {}) {
+function setup({ flags = {}, resources = DEFAULT_RESOURCES, fetchImpl, now = Date.now } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'mediated-'));
   const env = { SEND_SECRET: secret(), ADMIN_SENDERS: admin, ...flags };
   const access = new AccessStore({ dir, admins: [admin] });
   const tasks = new TaskStore({ dir });
-  const mediated = createMediated({ env, dir, resources, access, tasks, fetchImpl: fetchImpl || (async () => { throw new Error('fetch não deveria ser chamado'); }) });
+  const mediated = createMediated({ env, dir, resources, access, tasks, now, fetchImpl: fetchImpl || (async () => { throw new Error('fetch não deveria ser chamado'); }) });
   const api = createApi({ env, access, tasks, mediated, evo: { sendText: async () => ({ kind: 'ok' }) } });
   const issued = tasks.issue({ eventKey: `test:${randomBytes(5).toString('hex')}`, sender: admin, conv: `${admin}@s.whatsapp.net`, isGroup: false, request: 'teste' });
   tasks.setState(issued.task.id, 'dispatched');
-  const call = (path, body) => new Promise((resolve) => api({ method: 'POST', headers: { 'x-send-secret': env.SEND_SECRET, authorization: `Bearer ${issued.token}` }, body }, { status(c) { this.c = c; return this; }, json(o) { resolve({ code: this.c, body: o }); } }, path));
-  return { dir, env, access, tasks, mediated, call, close() { mediated.close(); access.close(); tasks.close(); rmSync(dir, { recursive: true, force: true }); } };
+  const callTask = (taskIssued, path, body) => new Promise((resolve) => api({ method: 'POST', headers: { 'x-send-secret': env.SEND_SECRET, authorization: `Bearer ${taskIssued.token}` }, body }, { status(c) { this.c = c; return this; }, json(o) { resolve({ code: this.c, body: o }); } }, path));
+  const call = (path, body) => callTask(issued, path, body);
+  return { dir, env, access, tasks, mediated, issued, call, callTask, taskIssued: (sender = admin) => { const x = tasks.issue({ eventKey: `test:${randomBytes(5).toString('hex')}`, sender, conv: `${sender}@s.whatsapp.net`, isGroup: false, request: 'teste' }); tasks.setState(x.task.id, 'dispatched'); return x; }, close() { mediated.close(); access.close(); tasks.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
 test('escritas mediadas nascem desligadas e falham antes de qualquer chamada externa', async () => {
@@ -116,7 +117,7 @@ test('Instagram mediado exige o hash, usa idempotência e verifica o link devolv
     const count = calls.length;
     const replay = await w.call('/api/ops/instagram/publish', body);
     assert.equal(replay.code, 200); assert.equal(replay.body.replayed, true); assert.equal(calls.length, count);
-    assert.ok(calls.filter((c) => c.key).every((c) => c.key !== 'ig-op-1')); 
+    assert.ok(calls.filter((c) => c.key).every((c) => c.key !== 'ig-op-1'));
     assert.ok(!JSON.stringify(first.body).includes(zernioToken));
   } finally { w.close(); }
 });
@@ -297,6 +298,26 @@ test('recuperação reavalia operação incerta ao iniciar e marca a evidência 
   } finally { w.close(); }
 });
 
+test('Instagram: publicação fica presa ao remetente, expira e respeita allowlist de mídia', async () => {
+  const clock = { t: 1_800_000_000_000 };
+  const resources = { version: 1, clients: { worki: { ...DEFAULT_RESOURCES.clients.worki, mediaAllowedHosts: ['cdn.allowed.test'] } } };
+  const w = setup({ resources, now: () => clock.t, flags: { INSTAGRAM_DRAFT_TTL_HOURS: '1', WRITE_ZERNIO_ENABLED: 'true', ZERNIO_API_KEY: secret() } });
+  const other = '5585988887777';
+  try {
+    w.access.grant({ by: admin, number: other, clients: ['worki'], ops: ['prepare_instagram_post', 'publish_instagram'] });
+    const outside = await w.call('/api/ops/instagram/prepare', { client: 'worki', caption: 'x', mediaItems: [{ type: 'image', url: 'https://cdn.other.test/a.jpg' }] });
+    assert.equal(outside.code, 422); assert.equal(outside.body.error, 'media_host_not_allowed');
+    const draft = await w.call('/api/ops/instagram/prepare', { client: 'worki', caption: 'x', mediaItems: [{ type: 'image', url: 'https://cdn.allowed.test/a.jpg' }] });
+    const denied = await w.callTask(w.taskIssued(other), '/api/ops/instagram/publish', { client: 'worki', draftId: draft.body.draft.id, contentHash: draft.body.draft.contentHash });
+    assert.equal(denied.code, 403); assert.equal(denied.body.error, 'draft_owner_mismatch');
+    const otherDraft = await w.callTask(w.taskIssued(other), '/api/ops/instagram/prepare', { client: 'worki', caption: 'x', mediaItems: [{ type: 'image', url: 'https://cdn.allowed.test/a.jpg' }] });
+    assert.notEqual(otherDraft.body.draft.id, draft.body.draft.id, 'outro remetente não sobrescreve a propriedade do rascunho');
+    clock.t += 3_600_001;
+    const expired = await w.call('/api/ops/instagram/publish', { client: 'worki', draftId: draft.body.draft.id, contentHash: draft.body.draft.contentHash });
+    assert.equal(expired.code, 409); assert.equal(expired.body.error, 'draft_expired');
+  } finally { w.close(); }
+});
+
 test('lista vazia não prova ausência nem permite duplicar publicação incerta', async () => {
   let posts = 0;
   const w = setup({ flags: { WRITE_ZERNIO_ENABLED: 'true', ZERNIO_API_KEY: secret() }, fetchImpl: async (_url, init) => {
@@ -311,7 +332,6 @@ test('lista vazia não prova ausência nem permite duplicar publicação incerta
     assert.equal(posts, 1);
   } finally { w.close(); }
 });
-
 
 test('logs mediados registram provedor/estado/http sem corpo, segredo, conteúdo ou URL privada', async () => {
   const token = secret(); const lines = []; const original = console.log; console.log = (...args) => lines.push(args.join(' '));
