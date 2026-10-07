@@ -120,3 +120,53 @@ test('Instagram mediado exige o hash, usa idempotência e verifica o link devolv
     assert.ok(!JSON.stringify(first.body).includes(zernioToken));
   } finally { w.close(); }
 });
+
+test('Vercel: espera padrão cobre ~60s, aceita proteção explicitamente e só aceita alias permitido', async () => {
+  const makeFetch = ({ alias = 'protected.example.test', publicStatus = 403, readyAfter = 1 }) => {
+    let reads = 0; let deploys = 0;
+    const fetchImpl = async (url, init = {}) => {
+      if (url.includes('/git/ref/heads/')) return { status: 200, json: async () => ({ object: { sha: 'base' } }) };
+      if (url.includes('/git/commits/base')) return { status: 200, json: async () => ({ tree: { sha: 'tree' } }) };
+      if (url.endsWith('/git/trees')) return { status: 201, json: async () => ({ sha: 'tree-new' }) };
+      if (url.endsWith('/git/commits')) return { status: 201, json: async () => ({ sha: 'commit-new' }) };
+      if (url.includes('/git/refs/heads/')) return { status: 200, json: async () => ({ ref: 'refs/heads/agent' }) };
+      if (url.endsWith('/deployments')) { deploys++; return { status: 200, json: async () => ({ id: `dpl-${deploys}` }) }; }
+      if (url.includes('/deployments/dpl-')) {
+        reads++;
+        return { status: 200, json: async () => ({ readyState: reads >= readyAfter ? 'READY' : 'BUILDING', url: alias }) };
+      }
+      if (url === `https://${alias}`) return { ok: publicStatus >= 200 && publicStatus < 300, status: publicStatus, json: async () => ({}) };
+      throw new Error('unexpected fake URL');
+    };
+    return { fetchImpl, reads: () => reads };
+  };
+
+  const protectedCase = makeFetch({ alias: 'preview.worki.test', publicStatus: 403 });
+  const accepted = setup({ flags: { WRITE_GITHUB_ENABLED: 'true', WRITE_VERCEL_ENABLED: 'true', VERCEL_ACCEPT_PROTECTED: 'true', VERCEL_POLL_MS: '0', GITHUB_TOKEN: secret(), VERCEL_TOKEN: secret() }, resources: { ...DEFAULT_RESOURCES, clients: { worki: { ...DEFAULT_RESOURCES.clients.worki, vercel: { ...DEFAULT_RESOURCES.clients.worki.vercel, allowedHosts: ['preview.worki.test'] } } } }, fetchImpl: protectedCase.fetchImpl });
+  try {
+    const r = await accepted.call('/api/ops/page/publish', { client: 'worki', slug: 'protected', html: '<title>Protected</title>' });
+    assert.equal(r.code, 200); assert.equal(r.body.result.protected, true); assert.equal(r.body.result.publicVerified, false);
+  } finally { accepted.close(); }
+
+  const deniedCase = makeFetch({ alias: 'preview.worki.test', publicStatus: 403 });
+  const denied = setup({ flags: { WRITE_GITHUB_ENABLED: 'true', WRITE_VERCEL_ENABLED: 'true', VERCEL_POLL_MS: '0', GITHUB_TOKEN: secret(), VERCEL_TOKEN: secret() }, resources: { ...DEFAULT_RESOURCES, clients: { worki: { ...DEFAULT_RESOURCES.clients.worki, vercel: { ...DEFAULT_RESOURCES.clients.worki.vercel, allowedHosts: ['preview.worki.test'] } } } }, fetchImpl: deniedCase.fetchImpl });
+  try {
+    const r = await denied.call('/api/ops/page/publish', { client: 'worki', slug: 'protected', html: '<title>Protected</title>' });
+    assert.equal(r.code, 502); assert.equal(r.body.error, 'vercel_error');
+  } finally { denied.close(); }
+
+  const unlistedCase = makeFetch({ alias: 'not-allowed.example.test', publicStatus: 200 });
+  const unlisted = setup({ flags: { WRITE_GITHUB_ENABLED: 'true', WRITE_VERCEL_ENABLED: 'true', VERCEL_POLL_MS: '0', GITHUB_TOKEN: secret(), VERCEL_TOKEN: secret() }, fetchImpl: unlistedCase.fetchImpl });
+  try {
+    const r = await unlisted.call('/api/ops/page/publish', { client: 'worki', slug: 'alias', html: '<title>Alias</title>' });
+    assert.equal(r.code, 502); assert.equal(r.body.error, 'vercel_error');
+  } finally { unlisted.close(); }
+
+  const long = makeFetch({ alias: 'long.worki.test', publicStatus: 200, readyAfter: 21 });
+  const waited = setup({ flags: { WRITE_GITHUB_ENABLED: 'true', WRITE_VERCEL_ENABLED: 'true', VERCEL_POLL_MS: '0', GITHUB_TOKEN: secret(), VERCEL_TOKEN: secret() }, resources: { ...DEFAULT_RESOURCES, clients: { worki: { ...DEFAULT_RESOURCES.clients.worki, vercel: { ...DEFAULT_RESOURCES.clients.worki.vercel, allowedHosts: ['long.worki.test'] } } } }, fetchImpl: long.fetchImpl });
+  try {
+    const r = await waited.call('/api/ops/page/publish', { client: 'worki', slug: 'long', html: '<title>Long</title>' });
+    assert.equal(r.code, 200); assert.equal(long.reads(), 21, 'a janela padrão menor que 60s não pode encerrar após 20 tentativas');
+  } finally { waited.close(); }
+});
+
