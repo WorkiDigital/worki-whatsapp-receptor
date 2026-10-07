@@ -12,6 +12,7 @@ import { TaskStore } from './lib/tasks.js';
 import { createEvo } from './lib/evo.js';
 import { createApi } from './lib/api.js';
 import { digits } from './lib/numbers.js';
+import { History } from './lib/history.js';
 
 const env = process.env;
 const port = Number(env.PORT || 3000);
@@ -24,8 +25,9 @@ const admins = String(env.ADMIN_SENDERS || env.ALLOWED_SENDERS || '').split(',')
 const access = new AccessStore({ dir, admins });
 const tasks = new TaskStore({ dir, ttlMs: Number(env.TASK_TTL_SECONDS || 7200) * 1000 });
 const evo = createEvo({ env });
-const api = createApi({ env, access, tasks, evo });
-const sendHandler = createSendHandler({ env, access, evo });
+const history = new History({ dir, env });
+const api = createApi({ env, access, tasks, evo, history });
+const sendHandler = createSendHandler({ env, access, evo, history });
 const log = (event, f = {}) => console.log(JSON.stringify({ event, ...f }));
 
 const server = http.createServer((req, res) => {
@@ -56,10 +58,10 @@ const timer = setInterval(async () => {
   if (!cfg || busy) return;
   busy = true;
   try {
-    await drain(store.queue, createDispatcher({ env, cfg, access, tasks, log }), log);
+    await drain(store.queue, createDispatcher({ env, cfg, access, tasks, history, log }), log);
   } catch { log('error', { code: 'drain_failed' }); } finally { busy = false; }
 }, 1000);
 
 server.listen(port, env.HOST || '0.0.0.0', () => log('listening', { port, ...store.queue.stats(), destination: Boolean(cfg) }));
-const stop = () => { clearInterval(timer); server.close(() => { store.close(); access.close(); tasks.close(); process.exit(0); }); };
+const stop = () => { clearInterval(timer); server.close(() => { history.close(); store.close(); access.close(); tasks.close(); process.exit(0); }); };
 process.on('SIGINT', stop); process.on('SIGTERM', stop);

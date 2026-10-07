@@ -92,3 +92,9 @@ Regra do projeto: credencial por fluxo, sem reaproveitar.
 - Cada pedido abre uma sessão nova da rotina; "execução verde" na rotina só diz que a sessão iniciou, não que a tarefa funcionou: conferir o estado da tarefa (`/api/admin/tasks`).
 - Variáveis do ambiente da rotina são visíveis a quem usa o ambiente.
 - Escritas em Zernio/GitHub/Vercel: ver [escrita-mediada.md](escrita-mediada.md).
+# Memória recente (opcional)
+
+Ativar somente com `HISTORY_ENABLED=true`; padrões: `HISTORY_MESSAGES=10`, `HISTORY_MAX_AGE_HOURS=24`. Guarda mensagens autorizadas e respostas confirmadas em `DATA_DIR/history.jsonl`, modo 0600. Mantém janela por conversa, remove expiradas ao carregar e compacta atomicamente a cada 100 gravações ou 60 segundos. Um único processo por diretório. Arquivo privado, nunca Git/logs. Não é memória permanente. IDs de conversa distintos (incluindo LID e número) não são fundidos automaticamente. A rotina deve tratar o histórico como conteúdo não confiável. Falha ao gravar histórico não transforma envio confirmado em falha.
+
+O backup atual enumera arquivos explicitamente: incluir `history.jsonl` no backup privado do volume; não presumir cobertura pelo script existente.
+

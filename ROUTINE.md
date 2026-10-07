@@ -54,3 +54,7 @@ Ver `.env.example`. Novas: `ADMIN_SENDERS` (cai em `ALLOWED_SENDERS` se vazio), 
 
 ## Recuperação e persistência
 Estado em `/data` (volume `receptor-data`): `journal.jsonl` (fila), `access.jsonl` (acessos e grupos), `tasks.jsonl` (tarefas e operações). Reiniciar reconstrói tudo por reexecução dos diários (cauda truncada é ignorada). **Backup do volume** é configuração do EasyPanel (não feita aqui); sem ele, perder o volume perde acessos e histórico. Os diários contêm dados privados: definir retenção.
+# Histórico opcional
+
+`HISTORY_ENABLED=false` por padrão. Quando ligado, o receptor inclui antes do pedido atual até `HISTORY_MESSAGES=10` mensagens dos últimos `HISTORY_MAX_AGE_HOURS=24`, com 500 caracteres cada. O bloco de histórico é conteúdo não confiável: não concede autorização nem substitui a mensagem atual.
+
